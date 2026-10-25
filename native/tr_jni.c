@@ -299,20 +299,28 @@ JNIEXPORT jstring JNICALL
 Java_org_fujiang_temproot_NativeBridge_nativeLeakProbe(JNIEnv *env, jclass cls)
 {
     tr_leak leak;
-    tr_buf out, text;
+    tr_buf out, body, text;
 
     (void)cls;
     tr_buf_init(&out);
+    tr_buf_init(&body);
     tr_buf_init(&text);
     tr_leak_probe(&leak);
-    tr_leak_json(&leak, &out);
+    /* tr_leak_json emits a complete object; nest it instead of appending to it. */
+    tr_leak_json(&leak, &body);
     tr_leak_text(&leak, &text);
+    tr_buf_add(&out, "{\"data\":");
+    tr_buf_add(&out, tr_buf_cstr(&body));
+    tr_buf_add(&out, ",\"summary\":");
+    tr_buf_add_json_string(&out, leak.summary);
+    tr_buf_addf(&out, ",\"any_leak\":%s", leak.any_leak ? "true" : "false");
     tr_buf_add(&out, ",\"report\":");
     tr_buf_add_json_string(&out, tr_buf_cstr(&text));
     tr_buf_add(&out, "}");
     {
         jstring result = new_string(env, tr_buf_cstr(&out));
         tr_buf_free(&out);
+        tr_buf_free(&body);
         tr_buf_free(&text);
         return result;
     }
