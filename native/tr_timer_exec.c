@@ -89,11 +89,16 @@ static void run_child(int strategy, int write_fd)
     } else {
         /* strategy 2: keep a sibling thread alive and leave a blocked signal
          * pending, so de_thread() returns -ERESTARTNOINTR after the exec check
-         * block has already run. */
+         * block has already run.
+         *
+         * The mask must be installed BEFORE pthread_create: a process-directed
+         * signal is delivered to any thread that does not block it, and the
+         * default action of SIGUSR1 is to terminate the process. Blocking it in
+         * the forking thread only is what killed strategy 2 in 0.3.0. */
+        sigemptyset(&blocked);
+        sigaddset(&blocked, SIGUSR1);
+        sigprocmask(SIG_BLOCK, &blocked, NULL);
         if (pthread_create(&sibling, NULL, sibling_spin, NULL) == 0) {
-            sigemptyset(&blocked);
-            sigaddset(&blocked, SIGUSR1);
-            sigprocmask(SIG_BLOCK, &blocked, NULL);
             raise(SIGUSR1);
             {
                 char *argv[] = { (char *)"/system/bin/sh", (char *)"-c", (char *)"true", NULL };
