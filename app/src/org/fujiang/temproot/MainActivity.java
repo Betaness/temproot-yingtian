@@ -507,8 +507,27 @@ public final class MainActivity extends Activity {
                     }
                 }
                 render();
+                /* The app cannot read /proc/cmdline or the kernel BTF itself, so
+                 * pick up the companion-written evidence automatically instead of
+                 * asking for an extra tap on every launch. */
+                autoImportEvidence();
             });
         }, "temproot-probe").start();
+    }
+
+    private void autoImportEvidence() {
+        final File file = new File(getExternalFilesDir(null), "temproot-evidence.txt");
+        if (!file.isFile()) return;
+        new Thread(() -> {
+            JSONObject result = TemporaryRoot.applyEvidenceFromFile(file);
+            final JSONObject done = result;
+            runOnUiThread(() -> {
+                if (isDestroyed() || done == null || done.has("error")) return;
+                evidence = done;
+                sessionLog.event("evidence_auto_import", done.optString("guard_summary"));
+                render();
+            });
+        }, "temproot-autoevidence").start();
     }
 
     private void measureNow() {
