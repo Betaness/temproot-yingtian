@@ -16,15 +16,15 @@
 | --- | --- | --- |
 | 读取并核对目标固件身份 | 完成 | `docs/FINDINGS_ZH.md` §1 |
 | 提取并核对内核缓解措施配置 | 完成 | `docs/FINDINGS_ZH.md` §2（上一轮遗漏整段 KASAN 配置） |
-| CVE 适用性结论 | 完成，结论为**该构建上不可利用**（KASAN+MTE+PANIC_ON_OOPS） | 同上 |
-| 运行时结构布局 | 完成，31/31 字段由 BTF 现读，零硬编码 | `dist/layout-stock-kernel.json` |
-| 普通 APK 权限可行性 | 已实现真实系统调用探测，**未在真机运行** | `native/tr_probe.c` |
+| CVE 适用性结论 | **失败路径实机可达**（uid 2000，策略 2/3 对照）；是否可利用仍未验证 | `docs/DEVICE_RESULTS_ZH.md` §2 |
+| 运行时结构布局 | 完成；设备拒绝 BTF，改由离线 BTF 表（38/38 字段）供给，按内核 release 精确匹配 | `dist/layout-stock-kernel.json` |
+| 普通 APK 权限可行性 | **已实测**：seccomp 杀 io_uring/userfaultfd，timer_create/pipe/memfd/fork-exec 可用 | `docs/DEVICE_RESULTS_ZH.md` §1 |
 | 中文 APK（探测/闸门/布局/测量/授权/验证/日志） | 完成并打包 | `dist/*.apk` |
 | 不支持构建安全停止 | 完成（fail-closed + 明确阻断码） | `native/tr_guard.c` |
 | 临时 root 授权层（rootd + su） | 完成，仅在已有 root 凭据时可用 | `native/tr_rootd.c` |
 | 严格权限验证 | 完成（uid + CAP_SYS_ADMIN + 特权操作） | `native/tr_verify.c` |
 | 内核内存写入 / 凭据改写 | **未实现**，本固件上被闸门阻断 | `tr_timer_trigger_run()` 直接返回 |
-| 实机安装与运行 | **未执行** | `VALIDATION.md` §3 |
+| 实机安装与运行 | **已完成**（2026-10-25，设备上 adb 安装 + uiautomator 校验） | `docs/DEVICE_RESULTS_ZH.md` |
 | 一次性临时 root 脚本（fastboot boot） | 完成，未在有 BL 解锁的设备上跑过 | `scripts/temp_boot_root.py` |
 | 第三方代码许可证检查 | 完成 | `LICENSES.md` |
 
