@@ -11,30 +11,35 @@
 | 伪造节点 | `--payload-preview` | 页内 `0xe0 + n*0x180` 共 21 槽，`parent=target-8`、`right=cred`、`left=0` |
 | 页级检测 | `claimdetect` | `mm_page_free` / `mm_page_alloc` 的真实 PFN 可读（如 `pfn=0x241bb7 order=0`） |
 
-## 一个关键发现：定时器没进队列
+## 更正：定时器确实入队（2026-10-26 实测）
 
-前两次触发**没有 panic**，原因不是"运气好"，而是：
+上一版这里写的是"定时器没进队列"，**实测推翻了它**。`scripts/harness/queuetest.c`：
 
 ```
-子进程主线程 pause() 不消耗 CPU
-  → CLOCK_THREAD_CPUTIME 定时器永远到不了过期点
-  → posix_cpu_timer_set 不会调 timerqueue_add
-  → rbtree 里没有节点，reap 时无队列可走
+uid=2000
+SIGEV_SIGNAL armed=4  proc_timers -1->-1  signals_fired=12
+SIGEV_NONE   armed=4  proc_timers -1->-1  signals_fired=0
 ```
 
-BRM 文档说"武装的定时器必须是 `SIGEV_SIGNAL`"，实际是**两个条件**：
+12 ms 烧 CPU、1 ms 周期 → 12 次信号，说明 `SIGEV_SIGNAL` 的
+`CLOCK_THREAD_CPUTIME_ID` 定时器**确实入队、确实过期、确实投递**。
+（`/proc/self/timers` 对普通进程不可读，所以 `proc_timers=-1`，这条观测手段作废。）
 
-1. `it_sigev_notify == SIGEV_SIGNAL`（否则 `posix_cpu_timer_set` 直接跳过 `timerqueue_add`）；
-2. **时钟必须真的走过过期点**（否则节点同样不进 rbtree）。
+### 那前两次为什么没崩
 
-修正：exec 线程在 `execve` 之前先烧一小段线程 CPU，让定时器过期入队，然后再 exec、再被 SIGKILL。
+合理的解释是：**reap 时那块内存还没被覆盖**。我是"先 SIGKILL、30 ms 后再喷流"，
+而 init 的回收可能更早发生，`rb_erase` 拿到的仍是**已释放但内容完好**的节点，
+指针自洽 → 走完不出事。
+
+**结论：不是没入队，是我没进窗口。** 8 KiB 流的喷发必须与 SIGKILL **并发**，
+而不是事后。
 
 ## 下一步（顺序固定）
 
-1. exec 线程 execve 前 `busy-loop` 约 1~5 ms，确认节点入队（可用 `kmem` trace 观察
-   `posix_timers_cache` 的 384 字节分配，或观察定时器信号是否投递）。
-2. 入队后再触发 exec + SIGKILL，让 `exit_itimers` 与 reap 的 `timerqueue_del` 形成窗口。
-3. 同时把 8 KiB stream 的喷发压进这个窗口（当前是"先杀后喷"，顺序需要反过来或加并发）。
+1. ~~烧 CPU 让节点入队~~（已证明入队不需要额外操作；但烧 CPU 可让定时器真正过期，
+   便于制造时序噪声）。
+2. 把 8 KiB stream 的喷发改成**并发**：一个线程持续 send，另一个线程负责 SIGKILL，
+   让喷发正好压在 `exit_itimers` 之后、`timerqueue_del` 之前。
 4. 命中后用 `mm_page_alloc` 的 PFN 与 `mm_page_free` 的 PFN 求交集，确认占住。
 5. 占住之后才谈 payload 落地与 `task+0x908` 的写。
 
