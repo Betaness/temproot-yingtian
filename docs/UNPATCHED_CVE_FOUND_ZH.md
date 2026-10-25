@@ -133,3 +133,40 @@ dequeue_signal            0xffffffc0803a6a190
 还差的是**竞态窗口本身**：PoC 用 membarrier 定向 IPI 在 flush 的 `list_del_init`
 中途打断 CPU0，让 hrtimer 回调把同一个 `sigq` 重新链入；这一轮没有构造，
 所以 `stale=0`。下一步就是把这套 IPI 时序搬过来。
+
+## stage2：竞态机器的移植与一个新发现的本机限制
+
+`scripts/harness/stage2.c` 把 PoC 的时序机器搬了过来：20000 个 `SIGEV_THREAD_ID`
+定时器、`target = now + 150ms` 的绝对时间点、按 16 个一组 / 4.7µs 间隔分组重排、
+CPU0 上执行 exec、CPU2/CPU3 两个 `clone(CLONE_VM)` helper 发 membarrier IPI。
+
+实测：
+
+```
+[worker] made=20000                      ← 20000 个定时器全部就位
+round 0: SI_TIMER=0 tagged=0             ← exec 之后私有 pending 队列为空（被正常 flush）
+round 1..3: 同上
+```
+
+### 关键新发现：本机不支持 RSEQ 版 membarrier
+
+```
+MEMBARRIER_CMD_QUERY → 支持位掩码 0x27f
+  bit0 QUERY / bit1 GLOBAL / bit2 GLOBAL_EXPEDITED / bit3 REGISTER_GLOBAL_EXPEDITED
+  bit4 PRIVATE_EXPEDITED / bit5 REGISTER_PRIVATE_EXPEDITED / bit6 PRIVATE_EXPEDITED_SYNC_CORE
+  缺失：PRIVATE_EXPEDITED_RSEQ（bit10）
+MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_RSEQ → EINVAL
+MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED       → OK
+```
+
+PoC 用 `PRIVATE_EXPEDITED_RSEQ | FLAG_CPU` **定向只打断 CPU0**；
+本机没有这条命令，退化成 `PRIVATE_EXPEDITED`（打断所有 CPU）后，
+IPI 的落点精度不足，`list_del_init` 的两条 store 之间打不进去 → `tagged=0`。
+
+### 下一步的替代方案
+
+1. 用 **CPU0 上的高频定时器自身**做打断源（`timerfd` + `CLOCK_MONOTONIC` 短周期），
+   比 all-CPU IPI 更能保证落点在 CPU0；
+2. 或用 sentinel 信号（`rt_tgsigqueueinfo`）本身作为中断源——它已经能把
+   目标线程从内核态切出去；
+3. 还可以叠加 `sched_setaffinity` 抖动，让 release_task 与回调在同一 CPU 上挤占。
