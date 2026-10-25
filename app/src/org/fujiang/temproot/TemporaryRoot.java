@@ -158,6 +158,31 @@ public final class TemporaryRoot {
                 || "yes".equalsIgnoreCase(value) || "on".equalsIgnoreCase(value);
     }
 
+    /**
+     * Report the exploitation stage table. Never writes kernel memory: the
+     * destructive stages refuse unless an operator exported
+     * TR_DESTRUCTIVE_ALLOW=1 in the process environment, which the app itself
+     * never sets.
+     *
+     * @param groom when true, also performs the user-space pipe pre-spray and
+     *              releases it again before returning
+     */
+    public static JSONObject exploitPlan(boolean groom) {
+        if (!NativeBridge.load()) return error("native library not loaded");
+        return parse(NativeBridge.nativeExploitPlan(groom ? 1 : 0));
+    }
+
+    /**
+     * Enumerate every readable kernel interface that could disclose an address.
+     * Read-only: it opens files, reads a bounded amount and closes them.
+     * A negative result defines whether the primitive stage is blocked by the
+     * platform or merely by missing code.
+     */
+    public static JSONObject leakProbe() {
+        if (!NativeBridge.load()) return error("native library not loaded");
+        return parse(NativeBridge.nativeLeakProbe());
+    }
+
     public static int rootDaemonStart(String allowFile, int ttlSeconds) {
         if (!NativeBridge.load()) return -5;
         return NativeBridge.nativeRootdStart(allowFile, ttlSeconds);
