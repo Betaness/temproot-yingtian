@@ -8,3 +8,4 @@
 2026-10-25T11:43:55Z  slide 提取：trace 旁路全通（kmem/timer 事件都能开、raw pipe 能读、能抓到 vmalloc/线性映射指针），但记录走位对不齐，拿不到 text 字段；下一步按 ring_buffer_event 语义重写解析，或改用 %px 事件（mm_page_alloc 的 pfn）
 2026-10-25T11:55:21Z  KASLR slide 提取成功：slide=0x2459c00000（本次开机）。方法=rss_stat trigger 旁路开 sched_blocked_reason + trace_pipe_raw 原始记录，按 16 字节页头/type_len*4+4 解析，caller 在 payload+16；与文本 trace 的 worker_thread+0x248 精确互证。selinux_state 运行时=0xffffffe4dc559630
 2026-10-25T11:57:54Z  plant --preflight 自动化跑通：投票法量 slide=0x2459c00000（43 票），并打印 selinux_state 与 selinux-7 写目标；--arm-test 32 个 SIGEV_SIGNAL 定时器正常。--run 仍上锁（需 --i-accept-reboot）
+2026-10-25T12:03:22Z  plant 干跑验证：fork+exec 线程+SIGKILL 时序可用（子进程被 SIGKILL 终止、父进程 reap，设备无恙），slide 复测仍 0x2459c00000（34 票）。发现 SIGKILL 是进程级的，所以'父进程 reap'本身就是触发步；真跑需要装 SIGEV_SIGNAL 定时器 + 8KB stream 占位
