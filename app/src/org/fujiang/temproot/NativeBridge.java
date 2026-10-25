@@ -35,6 +35,8 @@ public final class NativeBridge {
     public static native String nativeTrigger();
     public static native String nativeApplyEvidence(int kasanOff, int mteHw, String verifiedBootState,
                                                     String flashLocked, String verityMode);
+    public static native String nativeExploitPlan(int doGroom);
+    public static native String nativeLeakProbe();
     public static native String nativeVerify();
     public static native int nativeRootdStart(String allowFile, int ttlSeconds);
     public static native int nativeRootdPing();
