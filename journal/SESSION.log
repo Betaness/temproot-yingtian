@@ -13,3 +13,4 @@
 2026-10-25T12:11:23Z  plant 施工进度：slide/定时器/触发时序/伪造节点/页级检测全部可用；关键发现=定时器没进队列（主线程 pause 不烧 CPU，CLOCK_THREAD_CPUTIME 不过期就不入 rbtree），这解释了前两次为何不 panic。下一步：exec 线程 execve 前烧 CPU 让节点入队
 2026-10-25T12:14:02Z  自我更正：queuetest 实测 SIGEV_SIGNAL 定时器确实入队并投递（12ms/1ms→12 次信号），上一版'没进队列'的结论作废。真正原因是喷流在 SIGKILL 之后 30ms 才发生，错过了 exit_itimers→timerqueue_del 的窗口；下一步改为并发喷流
 2026-10-25T12:15:39Z  并发喷流第一跑：改成进程级 SIGKILL（不需要 tid），喷了 8193 条流；order-1 free=0 因为只装了 8 个定时器，21 对象/页的 slab 没被清空——BRM 用 2048 个才逼出页释放。设备无恙
+2026-10-25T12:17:50Z  准备跑 2048 定时器版本（CHILD_TIMERS=2048）：slab 21 对象/页 → 期望释放 ~96 张 order-1 页，并发喷 8KB stream 抢页。风险：若抢到且 init 回收僵尸，rb_erase 走畸形节点可能 oops→重启。代码已推送到 12d116c 之后

