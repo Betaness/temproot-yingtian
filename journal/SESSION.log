@@ -17,3 +17,4 @@
 2026-10-25T12:18:33Z  2048 定时器装上并释放，但 trace 里零 order-1 页事件；用 64MB 写入验证事件本身正常（147 free/129 alloc 全 order=0）→ 结论：SLUB 把空 slab 留在 partial 列表不还 page，且 /sys/kernel/slab/*/shrink 对 shell 拒绝。下一步按 BRM 做法先压 66MB pipe 页逼回收，再释放定时器+喷流
 2026-10-25T12:19:45Z  实现 --pressure-spray（BRM 顺序：先压 66MiB pipe 页 → 2048 定时器子进程 → SIGKILL → 并发 8KB 流抢页 → order-1 PFN 交集判定）。跑之前先落盘；若 reap 走坏节点可能 panic 重启
 2026-10-25T12:23:17Z  页回收打通：2048 定时器释放出 91 张 order-1 页，8KB unix stream 抢到其中 86 张（程序自己打印 CLAIMED）。踩坑记录：trace 缓冲太小、只读 1MB、order=1 匹配带空格。下一步把 payload 从 'A' 换成伪造节点做真正的写
+2026-10-25T12:28:15Z  AIO 回读路线死亡：io_destroy 卡 D 状态（kill -9 无效），BRM 的 AIO 环本机不可用。ashmem/pipe 是 order-0 movable，抢不到 order-1 unmovable 的 slab 页。改为方案 3：unix stream 的 recv 差分（skb 持页引用，内核写入会体现在 recv 回来的字节上），需要一次 reap
