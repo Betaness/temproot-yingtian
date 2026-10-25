@@ -1,6 +1,6 @@
 {
   "apk": "temproot-0.3.0-experimental.apk",
-  "sha256": "ce61b20ee60865f96a344d7dabfa45d6734345e0fec4415902bf5d8c58784755",
+  "sha256": "5cf893ba9247d1826151eb0d4e1b49d07054f5a8136a5953c0fc5ff85eebf696",
   "bytes": 94830,
   "version": "0.3.0-experimental",
   "min_sdk": 26,
@@ -52,7 +52,7 @@
   },
   "resource_table": {
     "compression": "stored",
-    "data_offset": 83460,
+    "data_offset": 83360,
     "aligned_4_bytes": true
   },
   "signature_verification": "Verifies\nVerified using v1 scheme (JAR signing): false\nVerified using v2 scheme (APK Signature Scheme v2): true\nVerified using v3 scheme (APK Signature Scheme v3): true\nVerified using v3.1 scheme (APK Signature Scheme v3.1): false\nVerified using v4 scheme (APK Signature Scheme v4): false\nVerified for SourceStamp: false\nNumber of signers: 1\nSigner #1 certificate DN: CN=TemporaryRoot Research\nSigner #1 certificate SHA-256 digest: b65107b1059251b82ce04d8c58b5a4a1373154fd028ce8545c69b75ee23eb561\nSigner #1 certificate SHA-1 digest: f739d41d446df9c2b3b168f8769fc43e27359c50\nSigner #1 certificate MD5 digest: 30685e4a7d1a4e988a179a70dcbc0825\nSigner #1 key algorithm: RSA\nSigner #1 key size (bits): 3072\nSigner #1 public key SHA-256 digest: af1109ab7e645eecf354c973421637fd220653a6fc154fdfe1292d9a034fb625\nSigner #1 public key SHA-1 digest: 34086b5074d5049baf3c653889dc0ab29fdaee42\nSigner #1 public key MD5 digest: 2409469fb73b957b9b90d297be225740\nPicked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US\nWARNING: A restricted method in java.lang.System has been called\nWARNING: java.lang.System::loadLibrary has been called by org.conscrypt.NativeLibraryUtil in an unnamed module (file:/D:/Codex/android-kernel/.tools/android/build-tools_r35_windows/android-15/lib/apksigner.jar)\nWARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module\nWARNING: Restricted methods will be blocked in a future release unless native access is enabled",
@@ -60,7 +60,7 @@
   "device_tested": false,
   "source_files": {
     "app/src/org/fujiang/temproot/LogProvider.java": "232dbfe377b9c43e3b7554b8d2cb3623fbc827d7c4b0bcaebc8931ff80155405",
-    "app/src/org/fujiang/temproot/MainActivity.java": "9e2f6cb5a48c4f937a1fb89c8b812d31c5a867caf10548eb57d1aadf482cbbdd",
+    "app/src/org/fujiang/temproot/MainActivity.java": "4ab892351346cda19989d237e23f71d85b3f7e587cd36dc7bfa86dcfac9fe72f",
     "app/src/org/fujiang/temproot/NativeBridge.java": "48d815c4ccf073e6a0dc04c23c32fa5f5ea050c7171b3b7c47eb91a7e637b073",
     "app/src/org/fujiang/temproot/RootApp.java": "db06238af80ec0d3093ac953c16bb396650dab0dc3fb5b621e4c1dd7aa93bebf",
     "app/src/org/fujiang/temproot/SessionLog.java": "cbd6fc619f1d6a9ea4e130b2b2793c5334df14e676c4b0839dd310aabd3b1c3a",

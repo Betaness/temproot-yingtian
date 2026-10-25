@@ -144,14 +144,6 @@ public final class MainActivity extends Activity {
             status.addView(text("证据来源：伴侣进程 · " + evidence.optString("evidence_parsed", ""),
                     12, MUTED));
         }
-        if (probe != null) {
-            JSONObject guard = probe.optJSONObject("guard");
-            if (guard != null) {
-                status.addView(text(probe.optString("guard_summary", ""), 14, INK));
-                String code = guard.optString("block_code", "");
-                if (!code.isEmpty()) status.addView(text("阻断码：" + code, 13, DANGER));
-            }
-        }
 
         boolean libOk = TemporaryRoot.isNativeLoaded();
         JSONObject guardObj = evidence != null ? evidence.optJSONObject("guard")
@@ -186,7 +178,7 @@ public final class MainActivity extends Activity {
         stages.addView(text("以上状态彼此独立：构建成功 ≠ 安装成功 ≠ 权限验证成功。", 12, MUTED));
 
         if (probe != null) buildDeviceCard(probe.optJSONObject("env"));
-        if (probe != null) buildGuardCard(probe.optJSONObject("guard"));
+        if (guardView != null) buildGuardCard(guardView);
         buildReachabilityCard();
         buildEscalationCard(guardOk);
         buildDaemonCard();
