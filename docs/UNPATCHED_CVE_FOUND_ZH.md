@@ -170,3 +170,23 @@ IPI 的落点精度不足，`list_del_init` 的两条 store 之间打不进去 �
 2. 或用 sentinel 信号（`rt_tgsigqueueinfo`）本身作为中断源——它已经能把
    目标线程从内核态切出去；
 3. 还可以叠加 `sched_setaffinity` 抖动，让 release_task 与回调在同一 CPU 上挤占。
+
+## 对照实验（关键）：机制成立，只差竞态
+
+`scripts/harness/ctl.c`：leader **保持存活**，worker 同样创建 20000 个
+`SIGEV_THREAD_ID` 定时器指向 leader tid，父进程 ptrace 窥视 leader 的私有队列：
+
+```
+[worker] made=20000
+control(live leader): SI_TIMER=4096 tagged=4096     ← 探测窗口 4096 个偏移全部命中
+```
+
+结论：
+1. `SIGEV_THREAD_ID` + 阻塞信号 + 指向指定 tid 的用法**完全正确**；
+2. `PTRACE_PEEKSIGINFO` 能读到这些条目，tag 也对；
+3. 所以 stage2 里从僵尸 leader 得到的 `SI_TIMER=0` 不是"没入队"，
+   而是**队列被 release_task 干净地 flush 掉了**——竞态没打中。
+
+这把问题彻底限定为：**只差在 flush 的 `list_del_init` 两条 store 之间插进一次回调**。
+参数扫描程序（delay × lead 共 24 组）已写好，但 sweep 的循环控制有 bug
+（goto 跳转导致只跑了第一组），需要修完再扫。
