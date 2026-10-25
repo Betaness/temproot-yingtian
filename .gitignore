@@ -1,0 +1,15 @@
+# build outputs and secrets stay out of version control
+build/
+private/
+dist/lib/
+dist/*.apk
+dist/*.sha256
+dist/native-build.json
+dist/build-result.json
+!dist/layout-stock-kernel.json
+
+# editor / shell noise
+*.log
+*.tmp
+.vscode/
+.idea/
