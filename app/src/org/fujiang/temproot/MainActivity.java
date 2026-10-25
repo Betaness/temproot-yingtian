@@ -213,6 +213,59 @@ public final class MainActivity extends Activity {
                     ? "完整" : "缺失") + " · kasan_off=" + result.optBoolean("kasan_off");
         }));
         actions.addView(evidenceBtn);
+
+        Button planBtn = new Button(this);
+        planBtn.setText("查看利用阶段报告（不执行）");
+        planBtn.setEnabled(!busy);
+        planBtn.setOnClickListener(v -> {
+            if (busy) return;
+            busy = true;
+            render();
+            new Thread(() -> {
+                JSONObject r = TemporaryRoot.exploitPlan(true);
+                final String text = formatPlan(r);
+                sessionLog.event("exploit_plan", r.optJSONObject("plan") != null
+                        ? r.optJSONObject("plan").optString("blocker") : "no plan");
+                try {
+                    sessionLog.setReport(r.toString(2));
+                } catch (Exception e) {
+                    sessionLog.setReport(r.toString());
+                }
+                runOnUiThread(() -> {
+                    busy = false;
+                    if (isDestroyed()) return;
+                    render();
+                    showText("利用阶段报告（未执行任何内核写入）", text);
+                });
+            }, "temproot-plan").start();
+        });
+        actions.addView(planBtn);
+
+        Button leakBtn = new Button(this);
+        leakBtn.setText("扫描泄漏面（只读）");
+        leakBtn.setEnabled(!busy);
+        leakBtn.setOnClickListener(v -> {
+            if (busy) return;
+            busy = true;
+            render();
+            new Thread(() -> {
+                JSONObject r = TemporaryRoot.leakProbe();
+                final String text = r.optString("report", r.optString("error", "无数据"));
+                sessionLog.event("leak_probe", r.optString("summary", "?"));
+                try {
+                    sessionLog.setReport(r.toString(2));
+                } catch (Exception e) {
+                    sessionLog.setReport(r.toString());
+                }
+                runOnUiThread(() -> {
+                    busy = false;
+                    if (isDestroyed()) return;
+                    render();
+                    showText("内核地址泄漏面（只读扫描）", text);
+                });
+            }, "temproot-leak").start();
+        });
+        actions.addView(leakBtn);
         actions.addView(text("伴侣（adb / Shizuku / rootd）把证据写到 "
                 + getExternalFilesDir(null) + "/temproot-evidence.txt 后点这个按钮。"
                 + "应用自己读不到 /proc/cmdline 与 BTF，所以这一步只能由更强的进程提供。", 12, MUTED));
@@ -438,8 +491,39 @@ public final class MainActivity extends Activity {
         box.addView(history);
     }
 
-    private String reasonOf(int rc) {
-        switch (rc) {
+    private String formatPlan(JSONObject r) {
+        if (r == null || r.has("error")) {
+            return "无数据：" + (r == null ? "null" : r.optString("error"));
+        }
+        JSONObject plan = r.optJSONObject("plan");
+        if (plan == null) return "无阶段数据";
+        StringBuilder sb = new StringBuilder();
+        sb.append("闸门：").append(plan.optBoolean("guard_ok") ? "放行" : "阻断")
+                .append(" · 布局：").append(plan.optBoolean("layout_ok") ? "完整" : "不完整")
+                .append(" · 破坏性开关：").append(plan.optBoolean("destructive_allowed") ? "已开" : "未开")
+                .append("\n预喷：").append(plan.optBoolean("groom_ok")
+                        ? ("成功 " + plan.optInt("pipes_held") + " 个 pipe（"
+                        + plan.optDouble("groom_ms") + " ms），已释放")
+                        : "未执行或失败")
+                .append("\n当前阻断：").append(plan.optString("blocker", "无"))
+                .append("\n\n阶段：\n");
+        JSONArray stages = plan.optJSONArray("stages");
+        if (stages != null) {
+            for (int i = 0; i < stages.length(); i++) {
+                JSONObject st = stages.optJSONObject(i);
+                if (st == null) continue;
+                sb.append("  ").append(st.optBoolean("reached") ? "▶ " : "× ")
+                        .append(st.optString("stage"))
+                        .append("   status=").append(st.optInt("status")).append("\n")
+                        .append("      ").append(st.optString("note")).append("\n");
+            }
+        }
+        sb.append("\ntrigger / reclaim / primitive / cred 均为未实现状态，")
+                .append("本报告只反映前置条件与门禁，不代表可利用。");
+        return sb.toString();
+    }
+
+    private String reasonOf(int rc) {        switch (rc) {
             case -7: return "当前进程没有 root 权限（euid≠0）";
             case -5: return "被缓解措施闸门阻断";
             case -8: return "调用方 uid 未获授权";
