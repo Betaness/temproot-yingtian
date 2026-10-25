@@ -76,3 +76,51 @@ order-1 frees=0 allocs=1
 - 定时器数量提到 **2048**（受 `RLIMIT_...`/per-process 上限约束，可能需要多进程）。
 - 喷流与 kill 的时序改成：先喷到一定量 → kill → 继续喷 → 停。
 - 用 `order=1` 且 `mm_page_free` 的 PFN ∩ `mm_page_alloc` 的 PFN 判断是否占住。
+
+## 2048 定时器 + order 分布实测（2026-10-26 03:18）
+
+```
+=== concurrent spray ===
+child=991  timers_armed=2048
+kill(991, SIGKILL)  (tid handoff not required)
+sprayer: 8193 streams
+order-1 frees=0 allocs=0
+```
+
+2048 个定时器**确实装上并随进程退出释放**了，但 trace 里没有任何 order-1 页事件。
+换一个重负载验证事件本身没问题：
+
+```
+64 MiB 写入 + 删除期间：
+  mm_page_free : 147 条，全部 order=0
+  mm_page_alloc: 129 条，全部 order=0
+```
+
+**事件是好的，问题是 SLUB 不还页。**
+
+`posix_timers_cache` 是 `order-1`（21 对象 / 8 KiB 页）。对象全部释放后，
+SLUB 默认把空 slab 留在 `cpu_partial` / `partial` 列表，**不立刻还给 buddy**。
+所以：没有 order-1 free → 没有被释放的页 → 喷流拿不到它。
+
+想手动逼它还页也不行：
+
+```
+/sys/kernel/slab/posix_timers_cache/shrink      → Permission denied
+objects / slabs / object_size                    → Permission denied
+```
+
+### 结论与下一步
+
+这条链要成立，必须**先制造内存压力逼 SLUB 回收空 slab**。BRM 文档里正是这么做的：
+
+> Holding 66 MiB of pipe pages, then deleting 2048 timers and spraying 3072 AIO rings,
+> put leaked timer `pfn=0xb51c04` in ring 181
+
+也就是顺序是：
+
+1. **先占住大量 pipe 页**（约 66 MiB）→ 把内存压紧；
+2. 再释放 2048 个定时器 → 空 slab 被回收、页真的还给 buddy；
+3. 同时用 8 KiB unix stream（或 AIO ring）抢那张页；
+4. 用 order-1 的 PFN 交集确认。
+
+下一步就按这个顺序实现 `--pressure-spray`。
