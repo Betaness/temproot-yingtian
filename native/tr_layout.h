@@ -24,6 +24,8 @@ typedef struct {
 
 typedef struct {
     int btf_ok;
+    int offline_used;    /* 1 when the runtime BTF was unreadable and the
+                          * offline table (same kernel image) was used instead */
     int complete;
     int btf_type_count;
     int count;
@@ -32,7 +34,7 @@ typedef struct {
     char missing[512];
 } tr_layout;
 
-int tr_layout_build(tr_layout *lay, const char *btf_path);
+int tr_layout_build(tr_layout *lay, const char *btf_path, const char *kernel_release);
 int tr_layout_get(const tr_layout *lay, const char *object, const char *member,
                   uint32_t *byte_off);
 void tr_layout_json(const tr_layout *lay, tr_buf *out);

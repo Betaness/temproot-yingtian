@@ -80,7 +80,8 @@ int tr_guard_evaluate(const tr_env *env, tr_guard *g)
                         env->kernel_release);
             return TR_OK;
         }
-        g->verdict = tr_build_evaluate(row);
+        g->verdict = (row->kasan && !env->cmdline_kasan_off) ? TR_BUILD_BLOCK
+                                                             : TR_BUILD_EXPERIMENT;
         g->kasan_active = row->kasan && !env->cmdline_kasan_off;
         g->kfence_active = row->kfence && !env->cmdline_kfence_off;
         g->panic_on_oops = row->panic_on_oops;
@@ -108,15 +109,19 @@ int tr_guard_evaluate(const tr_env *env, tr_guard *g)
     if (g->kasan_active) {
         guard_block(g, "KASAN_ACTIVE",
                     "KASAN 处于启用状态：悬垂指针一经解引用即触发标签/影子校验，"
-                    "配合 PANIC_ON_OOPS 会立即重启设备。本工具拒绝在内核内存上执行任何写入");
+                    "配合 PANIC_ON_OOPS 会立即重启设备。本工具在内核内存上不执行写入");
+    } else if (!env->cmdline_kasan_off) {
+        guard_block(g, "KASAN_STATE_UNKNOWN",
+                    "编译配置含 KASAN，但本进程读不到内核命令行里的 kasan=off，"
+                    "证据不足，按检测仍开启处理（可由伴侣进程经 adb 导入证据）");
+    } else {
+        guard_reason(g, "内核命令行含 kasan=off：本构建的 KASAN 检测在本次启动未生效");
     }
-    if (g->panic_on_oops && g->exploit_allowed) {
-        guard_block(g, "PANIC_ON_OOPS",
-                    "CONFIG_PANIC_ON_OOPS=y：任何一次内核 oops 都会重启，不允许试错的利用流程");
+    if (g->panic_on_oops) {
+        guard_reason(g, "CONFIG_PANIC_ON_OOPS=y：真实 oops 仍会重启（生产内核常态，按风险保留）");
     }
-    if (g->kfence_active && g->exploit_allowed) {
-        guard_block(g, "KFENCE_ACTIVE",
-                    "KFENCE 周期性抽样隔离对象，跨缓存复用会被随机捕获，不允许进入利用阶段");
+    if (g->kfence_active) {
+        guard_reason(g, "KFENCE 抽样开启：随机隔离对象，复用命中概率低但非零");
     }
     if (row == NULL && g->runtime_config_known && g->exploit_allowed) {
         /* Runtime config parsed, mitigations absent: require the offline table
@@ -142,7 +147,7 @@ int tr_guard_evaluate(const tr_env *env, tr_guard *g)
 
     /* Secondary consistency check: MTE hardware plus a debug-style build is a
      * strong hint that HW tags are live even when /proc/config.gz is absent. */
-    if (g->exploit_allowed && g->mte_hw && env->cfg_kasan_hw_tags) {
+    if (g->exploit_allowed && g->mte_hw && env->cfg_kasan_hw_tags && !env->cmdline_kasan_off) {
         guard_block(g, "MTE_HW_KASAN",
                     "硬件支持 MTE 且内核编译了 HW_TAGS：标签故障会同步触发");
     }

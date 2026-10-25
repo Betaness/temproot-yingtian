@@ -33,6 +33,8 @@ public final class NativeBridge {
     public static native String nativeLayoutReport();
     public static native String nativeTimerProbe(int rounds);
     public static native String nativeTrigger();
+    public static native String nativeApplyEvidence(int kasanOff, int mteHw, String verifiedBootState,
+                                                    String flashLocked, String verityMode);
     public static native String nativeVerify();
     public static native int nativeRootdStart(String allowFile, int ttlSeconds);
     public static native int nativeRootdPing();

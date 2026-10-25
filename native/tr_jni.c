@@ -111,7 +111,7 @@ Java_org_fujiang_temproot_NativeBridge_nativeProbe(JNIEnv *env, jclass cls,
     tr_probe_set_build(&g_env, c_mfr, c_model, c_device, c_fp, c_inc, c_rel,
                        (int)sdk, c_patch);
     tr_guard_evaluate(&g_env, &g_guard);
-    tr_layout_build(&g_layout, TR_LAYOUT_PATH);
+    tr_layout_build(&g_layout, TR_LAYOUT_PATH, g_env.kernel_release);
     g_probed = 1;
 
     tr_buf_add(&out, "{\"env\":");
@@ -147,7 +147,7 @@ Java_org_fujiang_temproot_NativeBridge_nativeLayoutReport(JNIEnv *env, jclass cl
     (void)cls;
     tr_buf_init(&out);
     if (!g_probed) {
-        tr_layout_build(&g_layout, TR_LAYOUT_PATH);
+        tr_layout_build(&g_layout, TR_LAYOUT_PATH, g_env.kernel_release);
     }
     tr_layout_text(&g_layout, &out);
     {
@@ -202,6 +202,54 @@ Java_org_fujiang_temproot_NativeBridge_nativeTrigger(JNIEnv *env, jclass cls)
     tr_guard_json(&g_guard, &out);
     tr_buf_add(&out, "}");
     tr_buf_free(&report);
+    {
+        jstring result = new_string(env, tr_buf_cstr(&out));
+        tr_buf_free(&out);
+        return result;
+    }
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_fujiang_temproot_NativeBridge_nativeApplyEvidence(JNIEnv *env, jclass cls,
+                                                          jint kasan_off, jint mte,
+                                                          jstring vbs, jstring locked,
+                                                          jstring verity)
+{
+    const char *c_vbs = NULL, *c_locked = NULL, *c_verity = NULL;
+    tr_buf out;
+
+    (void)cls;
+    if (vbs) c_vbs = (*env)->GetStringUTFChars(env, vbs, NULL);
+    if (locked) c_locked = (*env)->GetStringUTFChars(env, locked, NULL);
+    if (verity) c_verity = (*env)->GetStringUTFChars(env, verity, NULL);
+
+    tr_probe_apply_evidence(&g_env, (int)kasan_off, (int)mte, c_vbs, c_locked, c_verity);
+    tr_guard_evaluate(&g_env, &g_guard);
+    tr_layout_build(&g_layout, TR_LAYOUT_PATH, g_env.kernel_release);
+
+    tr_buf_init(&out);
+    tr_buf_add(&out, "{\"guard\":");
+    tr_guard_json(&g_guard, &out);
+    tr_buf_add(&out, ",\"guard_summary\":");
+    tr_buf_add_json_string(&out, tr_guard_summary_zh(&g_guard));
+    tr_buf_addf(&out, ",\"layout_complete\":%s,\"layout_offline\":%s",
+                g_layout.complete ? "true" : "false",
+                g_layout.offline_used ? "true" : "false");
+    tr_buf_add(&out, ",\"boot\":{");
+    tr_buf_add(&out, "\"verified_boot_state\":"); tr_buf_add_json_string(&out, g_env.verified_boot_state);
+    tr_buf_add(&out, ",\"flash_locked\":"); tr_buf_add_json_string(&out, g_env.flash_locked);
+    tr_buf_add(&out, ",\"verity_mode\":"); tr_buf_add_json_string(&out, g_env.verity_mode);
+    tr_buf_addf(&out, ",\"boot_unlocked\":%s", g_env.boot_unlocked ? "true" : "false");
+    tr_buf_add(&out, ",\"source\":"); tr_buf_add_json_string(&out, g_env.boot_state_source);
+    tr_buf_add(&out, "}");
+    tr_buf_addf(&out, ",\"kasan_off\":%s", g_env.cmdline_kasan_off ? "true" : "false");
+    tr_buf_addf(&out, ",\"mte_hw\":%s", g_env.hwcap2_mte ? "true" : "false");
+    tr_buf_add(&out, "}");
+
+    if (vbs) (*env)->ReleaseStringUTFChars(env, vbs, c_vbs);
+    if (locked) (*env)->ReleaseStringUTFChars(env, locked, c_locked);
+    if (verity) (*env)->ReleaseStringUTFChars(env, verity, c_verity);
+
     {
         jstring result = new_string(env, tr_buf_cstr(&out));
         tr_buf_free(&out);

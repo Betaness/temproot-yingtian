@@ -76,6 +76,88 @@ public final class TemporaryRoot {
         return NativeBridge.nativeLayoutReport();
     }
 
+    /**
+     * Merge evidence gathered by a companion process that has shell rights
+     * (adb, Shizuku or a running rootd). The app itself cannot read
+     * /proc/cmdline or /sys/kernel/btf on this device, so without this input the
+     * guard must stay conservative.
+     *
+     * Negative values mean "unknown, keep whatever the probe found".
+     */
+    public static JSONObject applyEvidence(int kasanOff, int mteHw, String verifiedBootState,
+                                          String flashLocked, String verityMode) {
+        if (!NativeBridge.load()) return error("native library not loaded");
+        return parse(NativeBridge.nativeApplyEvidence(kasanOff, mteHw, verifiedBootState,
+                flashLocked, verityMode));
+    }
+
+    /**
+     * Parse a companion-written evidence file:
+     * <pre>
+     * kasan_off=1
+     * mte=0
+     * verifiedbootstate=green
+     * flash_locked=1
+     * veritymode=enforcing
+     * </pre>
+     */
+    public static JSONObject applyEvidenceFromFile(java.io.File file) {
+        if (file == null || !file.isFile()) return error("evidence file not found");
+        int kasanOff = -1, mte = -1;
+        String vbs = "", locked = "", verity = "";
+        try (java.io.BufferedReader reader =
+                     new java.io.BufferedReader(new java.io.FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                int eq = line.indexOf('=');
+                if (eq <= 0) continue;
+                String key = line.substring(0, eq).trim().toLowerCase(java.util.Locale.ROOT);
+                String value = line.substring(eq + 1).trim();
+                switch (key) {
+                    case "kasan_off":
+                        kasanOff = truthy(value) ? 1 : 0;
+                        break;
+                    case "mte":
+                    case "mte_hw":
+                        mte = truthy(value) ? 1 : 0;
+                        break;
+                    case "verifiedbootstate":
+                    case "verified_boot_state":
+                        vbs = value;
+                        break;
+                    case "flash_locked":
+                    case "flash.locked":
+                        locked = value;
+                        break;
+                    case "veritymode":
+                    case "verity_mode":
+                        verity = value;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        } catch (Exception e) {
+            return error("evidence read failed: " + e.getClass().getSimpleName());
+        }
+        JSONObject result = applyEvidence(kasanOff, mte, vbs, locked, verity);
+        try {
+            result.put("evidence_file", file.getName());
+            result.put("evidence_parsed", "kasan_off=" + kasanOff + " mte=" + mte
+                    + " boot=" + vbs + " locked=" + locked + " verity=" + verity);
+        } catch (Exception ignored) {
+            /* JSONObject.put on a valid map cannot fail here. */
+        }
+        return result;
+    }
+
+    private static boolean truthy(String value) {
+        return "1".equals(value) || "true".equalsIgnoreCase(value)
+                || "yes".equalsIgnoreCase(value) || "on".equalsIgnoreCase(value);
+    }
+
     public static int rootDaemonStart(String allowFile, int ttlSeconds) {
         if (!NativeBridge.load()) return -5;
         return NativeBridge.nativeRootdStart(allowFile, ttlSeconds);

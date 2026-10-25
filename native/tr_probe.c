@@ -236,6 +236,38 @@ void tr_probe_boot_state(tr_env *env)
             env->verified_boot_state, env->flash_locked, env->boot_state_source);
 }
 
+void tr_probe_apply_evidence(tr_env *env, int kasan_off, int mte_hw,
+                             const char *verified_boot_state,
+                             const char *flash_locked,
+                             const char *verity_mode)
+{
+    if (kasan_off > 0) {
+        /* A companion with shell rights read the real command line. */
+        env->cmdline_kasan_off = 1;
+    } else if (kasan_off == 0) {
+        env->cmdline_kasan_off = 0;
+    }
+    if (mte_hw >= 0) {
+        env->hwcap2_mte = mte_hw;
+    }
+    if (verified_boot_state != NULL && verified_boot_state[0] != '\0') {
+        snprintf(env->verified_boot_state, sizeof(env->verified_boot_state), "%s",
+                 verified_boot_state);
+        snprintf(env->boot_state_source, sizeof(env->boot_state_source),
+                 "external:companion");
+        env->boot_unlocked = strcmp(env->verified_boot_state, "orange") == 0;
+    }
+    if (flash_locked != NULL && flash_locked[0] != '\0') {
+        snprintf(env->flash_locked, sizeof(env->flash_locked), "%s", flash_locked);
+    }
+    if (verity_mode != NULL && verity_mode[0] != '\0') {
+        snprintf(env->verity_mode, sizeof(env->verity_mode), "%s", verity_mode);
+    }
+    tr_logf(TR_LOG_INFO, "evidence: kasan_off=%d mte=%d boot=%s locked=%s verity=%s",
+            env->cmdline_kasan_off, env->hwcap2_mte, env->verified_boot_state,
+            env->flash_locked, env->verity_mode);
+}
+
 /* ---- syscall reachability probes -------------------------------------- */
 /* Each probe runs in a throwaway child so a denial cannot poison our state.
  * Android's app seccomp policy kills the process on some syscalls (SIGSYS)

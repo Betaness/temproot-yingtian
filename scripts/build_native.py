@@ -78,6 +78,7 @@ def write_export_map(path):
         'Java_org_fujiang_temproot_NativeBridge_nativeLayoutReport',
         'Java_org_fujiang_temproot_NativeBridge_nativeTimerProbe',
         'Java_org_fujiang_temproot_NativeBridge_nativeTrigger',
+        'Java_org_fujiang_temproot_NativeBridge_nativeApplyEvidence',
         'Java_org_fujiang_temproot_NativeBridge_nativeVerify',
         'Java_org_fujiang_temproot_NativeBridge_nativeRootdStart',
         'Java_org_fujiang_temproot_NativeBridge_nativeRootdPing',

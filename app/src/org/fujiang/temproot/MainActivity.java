@@ -42,7 +42,7 @@ public final class MainActivity extends Activity {
 
     private LinearLayout body;
     private SessionLog sessionLog;
-    private JSONObject probe, reachability, escalation, verification;
+    private JSONObject probe, reachability, escalation, verification, evidence;
     private String banner = "尚未探测";
     private String pendingExport;
     private boolean busy;
@@ -127,6 +127,15 @@ public final class MainActivity extends Activity {
 
         LinearLayout status = card("当前结论");
         status.addView(text(banner, 19, AMBER));
+        if (evidence != null) {
+            JSONObject guard2 = evidence.optJSONObject("guard");
+            if (guard2 != null) {
+                status.addView(text("（已导入伴侣证据）" + evidence.optString("guard_summary"), 14, INK));
+                String code2 = guard2.optString("block_code", "");
+                if (!code2.isEmpty()) status.addView(text("阻断码：" + code2, 13, DANGER));
+            }
+            status.addView(text(evidence.optString("evidence_parsed", ""), 12, MUTED));
+        }
         if (probe != null) {
             JSONObject guard = probe.optJSONObject("guard");
             if (guard != null) {
@@ -179,6 +188,26 @@ public final class MainActivity extends Activity {
         layoutBtn.setText("查看运行时布局明细（BTF）");
         layoutBtn.setOnClickListener(v -> showText("运行时布局", TemporaryRoot.layoutReport()));
         actions.addView(layoutBtn);
+
+        Button evidenceBtn = new Button(this);
+        evidenceBtn.setText("导入伴侣证据并重算闸门");
+        evidenceBtn.setEnabled(!busy);
+        evidenceBtn.setOnClickListener(v -> runTask("evidence_import", () -> {
+            File file = new File(getExternalFilesDir(null), "temproot-evidence.txt");
+            JSONObject result = TemporaryRoot.applyEvidenceFromFile(file);
+            if (result.has("error")) {
+                return "导入失败：" + result.optString("error") + "（路径 " + file.getAbsolutePath() + "）";
+            }
+            evidence = result;
+            sessionLog.event("evidence_import", result.optString("guard_summary"));
+            sessionLog.setReport(result.toString(2));
+            return result.optString("guard_summary") + "\n布局：" + (result.optBoolean("layout_complete")
+                    ? "完整" : "缺失") + " · kasan_off=" + result.optBoolean("kasan_off");
+        }));
+        actions.addView(evidenceBtn);
+        actions.addView(text("伴侣（adb / Shizuku / rootd）把证据写到 "
+                + getExternalFilesDir(null) + "/temproot-evidence.txt 后点这个按钮。"
+                + "应用自己读不到 /proc/cmdline 与 BTF，所以这一步只能由更强的进程提供。", 12, MUTED));
 
         Button help = new Button(this);
         help.setText("使用说明与限制");

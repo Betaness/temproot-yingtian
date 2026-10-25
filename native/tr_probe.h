@@ -131,4 +131,12 @@ int tr_probe_config_gz(tr_env *env);
 /* Parse androidboot.verifiedbootstate / flash.locked / veritymode. */
 void tr_probe_boot_state(tr_env *env);
 
+/* Merge evidence collected by a more privileged companion (adb/Shizuku/rootd):
+ * the app itself cannot read /proc/cmdline or /sys/kernel/btf on this device.
+ * Negative values mean "unknown, keep what the probe found". */
+void tr_probe_apply_evidence(tr_env *env, int kasan_off, int mte_hw,
+                             const char *verified_boot_state,
+                             const char *flash_locked,
+                             const char *verity_mode);
+
 #endif /* TR_PROBE_H */
