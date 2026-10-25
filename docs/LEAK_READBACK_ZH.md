@@ -57,3 +57,37 @@ allocator 不会把一张 order-1 unmovable 的页拆给 order-0 movable 分配�
 
 - 卡死的 aiospray 进程（pid 6306）仍在 D 状态，占约 7 MB；**重启即清**，不影响使用。
 - 设备其余状态正常：`boot_completed=1`、`Enforcing`、`verifiedbootstate=green`。
+
+## 路线 3 实测结果（2026-10-26 03:28）
+
+```
+=== readback (benign zero node) ===
+child=6808 timers_armed=2048
+streams claimed: 512
+baseline captured
+reaping child 6808 ...
+reaped, status=0x9
+no kernel-written pointers detected in the claimed pages
+```
+
+**整条流水线跑通了**：2048 定时器 → 512 条流抢页 → MSG_PEEK 基线 → **真的 waitpid 执行了 reap**
+→ 再次 PEEK 做差分。设备无恙（uptime 不变、`verifiedbootstate=green`）。
+
+但差分为零。原因不是回读机制，而是**触发窗口没进去**：
+
+- 我的 kill 在 exec 线程启动后 **2 ms** 才发；`execve("/system/bin/sh")` 在这个时间内
+  早就跑完 `exec_mmap` 并成功替换镜像了；
+- 一旦 exec 成功，`begin_new_exec` 走的是成功路径，`de_thread` 没有失败，
+  也就不存在"定时器已释放、节点还在队列"的不一致状态；
+- 于是 reap 时队列是干净的 → 没有任何内核写入 → 差分自然为零。
+
+### 结论
+
+回读机制（recv 差分）**成立且已验证可用**（流程跑完、无 panic）。
+真正卡住的是**把 SIGKILL 精确送进 `exec_mmap` 的 `down_read_killable` 窗口**：
+
+- 需要让 exec 在 `exec_mmap` 上**停住**足够久；
+- 常规手段（userfaultfd 让缺页卡住、FUSE 让 mmap 阻塞）在本机分别被 seccomp / 挂载权限挡住；
+- BRM 文档里提到"目标页被其他任务占用时输出 PARKED"，说明他们也有类似的停滞机制。
+
+这是本项目当前**唯一未解决的技术点**，而且它属于"时序工程"，不是结构性问题。

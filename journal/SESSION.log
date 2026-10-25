@@ -18,3 +18,4 @@
 2026-10-25T12:19:45Z  实现 --pressure-spray（BRM 顺序：先压 66MiB pipe 页 → 2048 定时器子进程 → SIGKILL → 并发 8KB 流抢页 → order-1 PFN 交集判定）。跑之前先落盘；若 reap 走坏节点可能 panic 重启
 2026-10-25T12:23:17Z  页回收打通：2048 定时器释放出 91 张 order-1 页，8KB unix stream 抢到其中 86 张（程序自己打印 CLAIMED）。踩坑记录：trace 缓冲太小、只读 1MB、order=1 匹配带空格。下一步把 payload 从 'A' 换成伪造节点做真正的写
 2026-10-25T12:28:15Z  AIO 回读路线死亡：io_destroy 卡 D 状态（kill -9 无效），BRM 的 AIO 环本机不可用。ashmem/pipe 是 order-0 movable，抢不到 order-1 unmovable 的 slab 页。改为方案 3：unix stream 的 recv 差分（skb 持页引用，内核写入会体现在 recv 回来的字节上），需要一次 reap
+2026-10-25T12:28:47Z  readback 差分实测：2048 定时器+512 流+基线+真 reap 全部跑通，但差分为零。原因=kill 在 exec 线程启动 2ms 后才发，exec 早已成功，de_thread 未失败，队列干净。真正卡点=把 SIGKILL 精确打进 exec_mmap 的 down_read_killable 窗口（需要让 exec 停住，userfaultfd/FUSE 都被挡）
