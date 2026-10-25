@@ -22,3 +22,4 @@
 2026-10-25T12:31:26Z  600 次时序扫描零命中零 panic：400 次(定时器在 main 线程) + 200 次(移到 exec 线程)。结论=当前构造从未进入不一致状态，reap 时队列始终干净。下一步四个假设：时钟选 PROCESS vs THREAD、不能靠外部 SIGKILL（应是 de_thread 自身的 zap_other_threads）、节点要入队未过期、reap 调用者不同
 2026-10-25T12:36:21Z  假设1/3 否掉（PROCESS 时钟 + 一次性远期，又 200 次零命中）；假设2 的 badelf 构造挂住（exec 未让子进程死，父进程 waitpid 阻塞），已清场。600+200+200=1000 次尝试，零命中零 panic
 2026-10-25T12:41:45Z  读到参考实现 uaf_plant.c，发现三个构造全错：①杀手靠 tgkill(旧tid,0)==ESRCH 判定 exchange_tids 窗口，不是延时；②2048 个定时器只有 1 个 SIGEV_SIGNAL(第1024个,it_value=3600s 只入队)，其余 2047 个是 SIGEV_NONE 灌 slab；③还要 50000 VMA + 3 个 mprotect 死循环线程抢 mmap_lock。我的移植 race.c 挂住（D 状态 mprotect、load 15.89），20 秒后自愈
+2026-10-25T12:44:37Z  A 半(trigger)跑通：race.c 用 tid-交换杀手，6/6 全部在窗口内被 SIGKILL(~90ms)；B 半(页回收)早已 86/91。但两者还没合体：race.c 里喷流在僵尸死掉之后才发，diffs=0、enforce=1。下一步=把 spray 提到 wait_zombie 之前、用 PFN 交集确认命中才 reap
