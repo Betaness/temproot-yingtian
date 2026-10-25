@@ -126,15 +126,23 @@ public final class MainActivity extends Activity {
         body.addView(text(SessionLog.VERSION + "  /  arm64 原生核心  /  " + TemporaryRoot.version(), 13, MUTED));
 
         LinearLayout status = card("当前结论");
-        status.addView(text(banner, 19, AMBER));
+        JSONObject guardView = evidence != null ? evidence.optJSONObject("guard")
+                : probe != null ? probe.optJSONObject("guard") : null;
+        String headline = banner;
+        if (guardView != null) {
+            headline = evidence != null ? evidence.optString("guard_summary")
+                    : probe.optString("guard_summary", banner);
+        }
+        status.addView(text(headline, 19,
+                guardView != null && guardView.optBoolean("exploit_allowed") ? ACCENT : AMBER));
+        if (guardView != null) {
+            String code = guardView.optString("block_code", "");
+            status.addView(text(code.isEmpty() ? "阻断码：无（未触发任何阻断条件）" : "阻断码：" + code,
+                    13, code.isEmpty() ? ACCENT : DANGER));
+        }
         if (evidence != null) {
-            JSONObject guard2 = evidence.optJSONObject("guard");
-            if (guard2 != null) {
-                status.addView(text("（已导入伴侣证据）" + evidence.optString("guard_summary"), 14, INK));
-                String code2 = guard2.optString("block_code", "");
-                if (!code2.isEmpty()) status.addView(text("阻断码：" + code2, 13, DANGER));
-            }
-            status.addView(text(evidence.optString("evidence_parsed", ""), 12, MUTED));
+            status.addView(text("证据来源：伴侣进程 · " + evidence.optString("evidence_parsed", ""),
+                    12, MUTED));
         }
         if (probe != null) {
             JSONObject guard = probe.optJSONObject("guard");
@@ -146,18 +154,26 @@ public final class MainActivity extends Activity {
         }
 
         boolean libOk = TemporaryRoot.isNativeLoaded();
-        boolean guardOk = probe != null && probe.optJSONObject("guard") != null
-                && probe.optJSONObject("guard").optBoolean("exploit_allowed");
-        JSONObject layout = probe == null ? null : probe.optJSONObject("layout");
+        JSONObject guardObj = evidence != null ? evidence.optJSONObject("guard")
+                : probe != null ? probe.optJSONObject("guard") : null;
+        boolean guardOk = guardObj != null && guardObj.optBoolean("exploit_allowed");
+        JSONObject layout = evidence != null
+                ? null : (probe == null ? null : probe.optJSONObject("layout"));
 
         LinearLayout stages = card("阶段状态");
         stage(stages, "原生库加载", libOk ? 1 : -1,
                 libOk ? "libtemproot 已加载" : "失败：" + TemporaryRoot.nativeLoadError());
         stage(stages, "环境探测", probe != null ? 1 : 0, probe != null ? "已完成" : "未执行");
-        stage(stages, "缓解措施闸门", probe == null ? 0 : guardOk ? 1 : -1,
-                probe == null ? "未评估" : guardOk ? "放行（实验性）" : "阻断");
-        stage(stages, "运行时布局", layout == null ? 0 : layout.optBoolean("complete") ? 1 : -1,
-                layout == null ? "未解析" : layout.optBoolean("complete")
+        stage(stages, "缓解措施闸门", guardObj == null ? 0 : guardOk ? 1 : -1,
+                guardObj == null ? "未评估" : guardOk ? "放行（实验性）" : "阻断");
+        stage(stages, "运行时布局",
+                evidence != null ? (evidence.optBoolean("layout_complete") ? 1 : -1)
+                        : layout == null ? 0 : layout.optBoolean("complete") ? 1 : -1,
+                evidence != null
+                        ? (evidence.optBoolean("layout_complete")
+                        ? (evidence.optBoolean("layout_offline") ? "离线 BTF 表完整" : "BTF 字段齐全")
+                        : "缺失")
+                        : layout == null ? "未解析" : layout.optBoolean("complete")
                         ? "BTF 字段齐全" : "缺失 " + layout.optInt("missing_count") + " 项");
         stage(stages, "可达性测量", reachability != null ? 1 : 0,
                 reachability == null ? "未执行" : reachability.optString("conclusion", "?"));
@@ -239,15 +255,18 @@ public final class MainActivity extends Activity {
             row(box, "内核标识", device.optString("kernel_release"));
             row(box, "页大小 / MTE 硬件", device.optInt("page_size") + " / "
                     + (device.optBoolean("hwcap2_mte") ? "支持" : "不支持"));
+            JSONObject bootView = (evidence != null && evidence.optJSONObject("boot") != null)
+                    ? evidence.optJSONObject("boot") : device;
+            String bootSource = bootView.has("source") ? bootView.optString("source")
+                    : device.optString("boot_state_source");
             row(box, "引导程序 / 验证启动",
-                    device.optString("verified_boot_state") + " · flash.locked="
-                            + device.optString("flash_locked") + " · veritymode="
-                            + device.optString("verity_mode") + "（来源 "
-                            + device.optString("boot_state_source") + "）");
-            box.addView(text(device.optBoolean("boot_unlocked")
+                    bootView.optString("verified_boot_state") + " · flash.locked="
+                            + bootView.optString("flash_locked") + " · veritymode="
+                            + bootView.optString("verity_mode") + "（来源 " + bootSource + "）");
+            box.addView(text(bootView.optBoolean("boot_unlocked")
                             ? "引导程序已解锁：可以走 fastboot boot 一次性内核拿到真正的临时 root（不写分区）。"
-                            : "引导程序锁定或状态未知：fastboot boot 会被拒绝，此状态下本固件没有可用的临时 root 路径。",
-                    12, device.optBoolean("boot_unlocked") ? ACCENT : AMBER));
+                            : "引导程序锁定：fastboot boot 会被拒绝，此状态下本固件没有可用的临时 root 路径。",
+                    12, bootView.optBoolean("boot_unlocked") ? ACCENT : AMBER));
             row(box, "构建增量", device.optString("incremental"));
         }
         if (proc != null) {
