@@ -19,7 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = [
     'tr_common.c', 'tr_probe.c', 'tr_build_db.c', 'tr_guard.c', 'tr_btf.c',
-    'tr_layout.c', 'tr_timer_exec.c', 'tr_verify.c', 'tr_rootd.c', 'tr_jni.c',
+    'tr_layout.c', 'tr_timer_exec.c', 'tr_verify.c', 'tr_rootd.c',
+    'tr_exploit.c', 'tr_leak.c', 'tr_jni.c',
 ]
 ABIS = {
     'arm64-v8a': 'aarch64-linux-android26',
@@ -79,6 +80,8 @@ def write_export_map(path):
         'Java_org_fujiang_temproot_NativeBridge_nativeTimerProbe',
         'Java_org_fujiang_temproot_NativeBridge_nativeTrigger',
         'Java_org_fujiang_temproot_NativeBridge_nativeApplyEvidence',
+        'Java_org_fujiang_temproot_NativeBridge_nativeExploitPlan',
+        'Java_org_fujiang_temproot_NativeBridge_nativeLeakProbe',
         'Java_org_fujiang_temproot_NativeBridge_nativeVerify',
         'Java_org_fujiang_temproot_NativeBridge_nativeRootdStart',
         'Java_org_fujiang_temproot_NativeBridge_nativeRootdPing',
