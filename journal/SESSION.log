@@ -39,3 +39,4 @@
 2026-10-25T14:06:46Z  stage2：20000 定时器+分组重排+exec 全部就位，但 SI_TIMER=0（队列被正常 flush，竞态未命中）。新发现：本机 membarrier 掩码 0x27f，缺 PRIVATE_EXPEDITED_RSEQ(bit10)，无法定向打断 CPU0，退化成 all-CPU IPI 精度不足。替代方案：CPU0 高频 timerfd / sentinel 信号作中断源
 2026-10-25T14:09:56Z  对照实验成功：活 leader 下 SI_TIMER=4096 tagged=4096，证明 SIGEV_THREAD_ID+timer+ptrace 用法完全正确；僵尸 leader 下为 0 说明队列被干净 flush，竞态未命中。问题限定为：需在 list_del_init 的两条 store 之间插入回调。sweep 循环有 bug(goto)，待修
 2026-10-25T14:32:11Z  stage3 sweep 40 组参数（delay 5~500us x lead 5~150us）全部 SI=0 tag=0：活 leader 对照组有 4096+ 条目，说明队列/PEEKSIGINFO 用法正确；僵尸 leader 下队列被干净 flush，竞态窗口仍未命中。本机缺 MEMBARRIER_CMD_PRIVATE_EXPEDITED_RSEQ，用 GLOBAL_EXPEDITED 替代后精度不足
+2026-10-25T14:45:30Z  stage4：改用 PTRACE_SEIZE+PTRACE_O_TRACEEXEC，在 exec 事件停下瞬间读队列，40 组参数仍全部 SI=0 → 说明 flush 在 exec 停止点之前就已干净完成，竞态窗口从未命中。到此为止：两个漏洞确认未修复、整套 harness 就绪，但纳秒级窗口在本机（缺 membarrier RSEQ 定向 IPI）无法稳定复现
