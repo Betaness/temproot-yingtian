@@ -15,3 +15,4 @@
 2026-10-25T12:15:39Z  并发喷流第一跑：改成进程级 SIGKILL（不需要 tid），喷了 8193 条流；order-1 free=0 因为只装了 8 个定时器，21 对象/页的 slab 没被清空——BRM 用 2048 个才逼出页释放。设备无恙
 2026-10-25T12:17:50Z  准备跑 2048 定时器版本（CHILD_TIMERS=2048）：slab 21 对象/页 → 期望释放 ~96 张 order-1 页，并发喷 8KB stream 抢页。风险：若抢到且 init 回收僵尸，rb_erase 走畸形节点可能 oops→重启。代码已推送到 12d116c 之后
 2026-10-25T12:18:33Z  2048 定时器装上并释放，但 trace 里零 order-1 页事件；用 64MB 写入验证事件本身正常（147 free/129 alloc 全 order=0）→ 结论：SLUB 把空 slab 留在 partial 列表不还 page，且 /sys/kernel/slab/*/shrink 对 shell 拒绝。下一步按 BRM 做法先压 66MB pipe 页逼回收，再释放定时器+喷流
+2026-10-25T12:19:45Z  实现 --pressure-spray（BRM 顺序：先压 66MiB pipe 页 → 2048 定时器子进程 → SIGKILL → 并发 8KB 流抢页 → order-1 PFN 交集判定）。跑之前先落盘；若 reap 走坏节点可能 panic 重启

