@@ -13,3 +13,6 @@ dist/build-result.json
 *.tmp
 .vscode/
 .idea/
+
+# the journal must survive a data wipe: keep it tracked
+!journal/SESSION.log
