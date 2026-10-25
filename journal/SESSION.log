@@ -20,3 +20,4 @@
 2026-10-25T12:28:15Z  AIO 回读路线死亡：io_destroy 卡 D 状态（kill -9 无效），BRM 的 AIO 环本机不可用。ashmem/pipe 是 order-0 movable，抢不到 order-1 unmovable 的 slab 页。改为方案 3：unix stream 的 recv 差分（skb 持页引用，内核写入会体现在 recv 回来的字节上），需要一次 reap
 2026-10-25T12:28:47Z  readback 差分实测：2048 定时器+512 流+基线+真 reap 全部跑通，但差分为零。原因=kill 在 exec 线程启动 2ms 后才发，exec 早已成功，de_thread 未失败，队列干净。真正卡点=把 SIGKILL 精确打进 exec_mmap 的 down_read_killable 窗口（需要让 exec 停住，userfaultfd/FUSE 都被挡）
 2026-10-25T12:31:26Z  600 次时序扫描零命中零 panic：400 次(定时器在 main 线程) + 200 次(移到 exec 线程)。结论=当前构造从未进入不一致状态，reap 时队列始终干净。下一步四个假设：时钟选 PROCESS vs THREAD、不能靠外部 SIGKILL（应是 de_thread 自身的 zap_other_threads）、节点要入队未过期、reap 调用者不同
+2026-10-25T12:36:21Z  假设1/3 否掉（PROCESS 时钟 + 一次性远期，又 200 次零命中）；假设2 的 badelf 构造挂住（exec 未让子进程死，父进程 waitpid 阻塞），已清场。600+200+200=1000 次尝试，零命中零 panic

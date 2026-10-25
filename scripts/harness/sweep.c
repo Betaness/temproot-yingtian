@@ -42,12 +42,25 @@ static void *exec_thread(void *arg)
     sev.sigev_notify = SIGEV_SIGNAL;
     sev.sigev_signo = SIGRTMIN;
     memset(&its, 0, sizeof(its));
-    its.it_value.tv_nsec = 200000L;
-    its.it_interval.tv_nsec = 200000L;
-    for (i = 0; i < N_TIMERS; i++) {
-        if (timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &many[i]) != 0) break;
-        if (timer_settime(many[i], 0, &its, NULL) != 0) break;
-        armed++;
+    {
+        const char *ck = getenv("CLOCK_KIND");
+        const char *os = getenv("ONE_SHOT");
+        clockid_t clk = (ck && ck[0] == 'p') ? CLOCK_PROCESS_CPUTIME_ID
+                                            : CLOCK_THREAD_CPUTIME_ID;
+        if (os && os[0] == '1') {
+            /* one shot, far future: the node stays queued and never fires */
+            its.it_value.tv_sec = 30;
+            its.it_interval.tv_sec = 0;
+            its.it_interval.tv_nsec = 0;
+        } else {
+            its.it_value.tv_nsec = 200000L;
+            its.it_interval.tv_nsec = 200000L;
+        }
+        for (i = 0; i < N_TIMERS; i++) {
+            if (timer_create(clk, &sev, &many[i]) != 0) break;
+            if (timer_settime(many[i], 0, &its, NULL) != 0) break;
+            armed++;
+        }
     }
     if (c) { (void)!write(c->fd, &armed, sizeof(armed)); }
     execve(argv[0], argv, NULL);
