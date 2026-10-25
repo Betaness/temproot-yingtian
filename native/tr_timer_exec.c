@@ -1,6 +1,7 @@
 #include "tr_timer_exec.h"
 
 #include <pthread.h>
+#include <sys/select.h>
 #include <sys/time.h>
 
 struct child_args {
@@ -157,10 +158,39 @@ static int run_one(int strategy, tr_timer_row *row)
     close(fds[1]);
     memset(row, 0, sizeof(*row));
     row->strategy = strategy;
-    got = read(fds[0], row, sizeof(*row));
+    /* Bounded read: a child forked from a threaded process can deadlock in
+     * pthread_create, and an unbounded read here would freeze the caller. */
+    {
+        fd_set set;
+        struct timeval tv;
+        FD_ZERO(&set);
+        FD_SET(fds[0], &set);
+        tv.tv_sec = 4;
+        tv.tv_usec = 0;
+        if (select(fds[0] + 1, &set, NULL, NULL, &tv) > 0) {
+            got = read(fds[0], row, sizeof(*row));
+        }
+    }
     close(fds[0]);
-    if (waitpid(pid, &status, 0) < 0) {
-        return TR_EIO;
+    {
+        int tries = 0;
+        for (;;) {
+            pid_t reaped = waitpid(pid, &status, WNOHANG);
+            if (reaped == pid) {
+                break;
+            }
+            if (reaped < 0) {
+                break;
+            }
+            if (++tries > 20) {
+                kill(pid, SIGKILL);
+                waitpid(pid, &status, 0);
+                row->exec_errno = -3;
+                row->elapsed_ms = (long)(tr_now_ms() - started);
+                return TR_ETIMEDOUT;
+            }
+            tr_sleep_ms(50);
+        }
     }
     if (WIFSIGNALED(status)) {
         row->terminated_by_signal = 1;

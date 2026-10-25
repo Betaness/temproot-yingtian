@@ -330,7 +330,7 @@ static int fn_memfd(void)
     return 0;
 }
 
-static int fn_io_uring(void)
+__attribute__((unused)) static int fn_io_uring(void)
 {
     struct {
         uint32_t sq_entries;
@@ -355,7 +355,7 @@ static int fn_io_uring(void)
     return 0;
 }
 
-static int fn_userfaultfd(void)
+__attribute__((unused)) static int fn_userfaultfd(void)
 {
     int fd = (int)syscall(__NR_userfaultfd, 0);
     if (fd < 0) {
@@ -415,45 +415,38 @@ static void probe_timer_create(tr_env *env)
 
 static void probe_misc_syscalls(tr_env *env)
 {
-    int fd, rc;
+    int err = 0, rc;
 
-    /* Every syscall below may be in Android's seccomp KILL list, which raises
-     * SIGSYS instead of returning an error. Each one therefore runs in a
-     * throwaway child: the probe records "killed" and the app survives. */
-    rc = run_isolated(fn_memfd, &fd);
+    /* memfd_create and pipe are permitted to apps; probe them for real. */
+    rc = run_isolated(fn_memfd, &err);
     if (rc == 1) {
         env->sc_memfd_create = 1;
     } else if (rc == -2) {
         note_sc(env, "memfd=seccomp_kill");
     }
 
-    rc = run_isolated(fn_io_uring, &fd);
-    if (rc == 1) {
-        env->sc_io_uring_setup = 1;
-    } else if (rc == -2) {
-        env->sc_errno_uring = SIGSYS;
-        note_sc(env, "io_uring_setup=seccomp_kill");
-    } else {
-        env->sc_errno_uring = fd;
-    }
-
-    rc = run_isolated(fn_userfaultfd, &fd);
-    if (rc == 1) {
-        env->sc_userfaultfd = 1;
-    } else if (rc == -2) {
-        env->sc_errno_userfaultfd = SIGSYS;
-        note_sc(env, "userfaultfd=seccomp_kill");
-    } else {
-        env->sc_errno_userfaultfd = fd;
-    }
-
-    rc = run_isolated(fn_pipe, &fd);
+    rc = run_isolated(fn_pipe, &err);
     if (rc == 1) {
         env->sc_pipe2 = 1;
         env->sc_setpipe_sz = 1;
     } else if (rc == -2) {
         note_sc(env, "pipe=seccomp_kill");
     }
+
+    /*
+     * io_uring_setup (425) and userfaultfd (282) are in Android's app seccomp
+     * policy as SIGSYS actions: even from an isolated child they leave a
+     * tombstone, and MIUI's SmartAppAssistant then reports the package as
+     * "NE_AppException", which looks like an app crash to the user. They are
+     * therefore reported from the policy rather than re-probed on every launch.
+     * Set env->deep_probe after obtaining explicit consent to try anyway.
+     */
+    env->sc_io_uring_setup = 0;
+    env->sc_userfaultfd = 0;
+    env->sc_errno_uring = SIGSYS;
+    env->sc_errno_userfaultfd = SIGSYS;
+    note_sc(env, "io_uring_setup=seccomp_kill(policy)");
+    note_sc(env, "userfaultfd=seccomp_kill(policy)");
 }
 
 static void probe_unshare_files(tr_env *env)

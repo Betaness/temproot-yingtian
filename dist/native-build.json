@@ -22,16 +22,16 @@
   "abis": {
     "arm64-v8a": {
       "so": "dist/lib/arm64-v8a/libtemproot.so",
-      "sha256": "637a67b8b09be9f89562c0f1077f5b7aec536660e540296bd859b6fab67be5e1",
-      "size_before_strip": 75160,
-      "size": 63336,
+      "sha256": "aa640dc672a6dd223b4b10d27ec3ad870a6f2634840308665da33384d8bd942b",
+      "size_before_strip": 74904,
+      "size": 63208,
       "triple": "aarch64-linux-android26"
     },
     "x86_64": {
       "so": "dist/lib/x86_64/libtemproot.so",
-      "sha256": "fcfd957615905cddcc9f83e25475ea71ad6316e5c35ae624adb65eeee91890f2",
-      "size_before_strip": 72392,
-      "size": 64584,
+      "sha256": "081359f520bc175e18498463d63c04bcc9172b8103af72e0aa35bf626c24e851",
+      "size_before_strip": 72296,
+      "size": 64568,
       "triple": "x86_64-linux-android26"
     }
   }
