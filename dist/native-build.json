@@ -1,0 +1,38 @@
+{
+  "ndk_version": "Pkg.ReleaseName = r27c",
+  "compiler": "Android (12470979, based on r522817c) clang version 18.0.3 (https://android.googlesource.com/toolchain/llvm-project d8003a456d14a3deb8054cdaa529ffbf02d9b262)",
+  "flags": [
+    "-fPIC",
+    "-O2",
+    "-fvisibility=hidden",
+    "-ffunction-sections",
+    "-fdata-sections",
+    "-Wall",
+    "-Wextra",
+    "-Wno-unused-parameter",
+    "-Wno-sign-compare",
+    "-std=c11",
+    "-D_FILE_OFFSET_BITS=64",
+    "-shared",
+    "-Wl,-z,max-page-size=16384",
+    "-Wl,--hash-style=both",
+    "-Wl,--gc-sections",
+    "-lz"
+  ],
+  "abis": {
+    "arm64-v8a": {
+      "so": "dist/lib/arm64-v8a/libtemproot.so",
+      "sha256": "c1210c52011850d302e7a4b184a3c8e1baa2757581239bc6beb60ba5d54a8d32",
+      "size_before_strip": 68352,
+      "size": 57064,
+      "triple": "aarch64-linux-android26"
+    },
+    "x86_64": {
+      "so": "dist/lib/x86_64/libtemproot.so",
+      "sha256": "4f4806d2709cc334a220c5d2c4bc61e9dd6f6854de06c30039379e2f651c6f51",
+      "size_before_strip": 65848,
+      "size": 58344,
+      "triple": "x86_64-linux-android26"
+    }
+  }
+}
