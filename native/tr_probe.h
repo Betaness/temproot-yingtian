@@ -48,6 +48,13 @@ typedef struct {
     int cmdline_kasan_off;
     int cmdline_kfence_off;
 
+    /* ---- bootloader / verified boot state (decides which root path exists) -- */
+    char verified_boot_state[16];   /* green | yellow | orange | red | unknown */
+    char flash_locked[16];          /* 1 | 0 */
+    char verity_mode[16];           /* enforcing | logging | unknown */
+    int boot_unlocked;              /* 1 when verifiedbootstate == orange */
+    char boot_state_source[32];     /* /proc/cmdline | /proc/bootconfig | none */
+
     /* ---- mitigation configuration (from /proc/config.gz when available) -- */
     char config_state[24]; /* "parsed" | "absent" | "unreadable" */
     int cfg_kasan;
@@ -119,5 +126,8 @@ void tr_probe_json(const tr_env *env, tr_buf *out);
 
 /* Parse /proc/config.gz into the cfg_* fields. */
 int tr_probe_config_gz(tr_env *env);
+
+/* Parse androidboot.verifiedbootstate / flash.locked / veritymode. */
+void tr_probe_boot_state(tr_env *env);
 
 #endif /* TR_PROBE_H */

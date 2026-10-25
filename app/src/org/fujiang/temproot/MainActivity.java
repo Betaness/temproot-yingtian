@@ -210,6 +210,15 @@ public final class MainActivity extends Activity {
             row(box, "内核标识", device.optString("kernel_release"));
             row(box, "页大小 / MTE 硬件", device.optInt("page_size") + " / "
                     + (device.optBoolean("hwcap2_mte") ? "支持" : "不支持"));
+            row(box, "引导程序 / 验证启动",
+                    device.optString("verified_boot_state") + " · flash.locked="
+                            + device.optString("flash_locked") + " · veritymode="
+                            + device.optString("verity_mode") + "（来源 "
+                            + device.optString("boot_state_source") + "）");
+            box.addView(text(device.optBoolean("boot_unlocked")
+                            ? "引导程序已解锁：可以走 fastboot boot 一次性内核拿到真正的临时 root（不写分区）。"
+                            : "引导程序锁定或状态未知：fastboot boot 会被拒绝，此状态下本固件没有可用的临时 root 路径。",
+                    12, device.optBoolean("boot_unlocked") ? ACCENT : AMBER));
             row(box, "构建增量", device.optString("incremental"));
         }
         if (proc != null) {

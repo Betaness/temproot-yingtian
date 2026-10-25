@@ -169,9 +169,75 @@ int tr_probe_config_gz(tr_env *env)
     return TR_OK;
 }
 
+/* ---- bootloader / verified boot state ---------------------------------- */
+/* Decides which temporary-root path exists at all: with a locked bootloader a
+ * one-shot `fastboot boot` is refused, and the kernel bug path costs a reboot. */
+static int boot_kv(const char *blob, const char *key, char *out, size_t cap)
+{
+    const char *p = strstr(blob, key);
+    size_t n = 0;
+
+    out[0] = '\0';
+    if (p == NULL) {
+        return -1;
+    }
+    p += strlen(key);
+    while (*p == '=' || *p == ' ' || *p == '\t' || *p == '"' || *p == ':') {
+        p++;
+    }
+    while (p[n] != '\0' && p[n] != ' ' && p[n] != '\n' && p[n] != '\t' &&
+           p[n] != '"' && p[n] != ',' && n + 1 < cap) {
+        out[n] = p[n];
+        n++;
+    }
+    out[n] = '\0';
+    return n > 0 ? 0 : -1;
+}
+
+void tr_probe_boot_state(tr_env *env)
+{
+    char blob[8192];
+    const char *src = NULL;
+
+    snprintf(env->verified_boot_state, sizeof(env->verified_boot_state), "unknown");
+    snprintf(env->flash_locked, sizeof(env->flash_locked), "unknown");
+    snprintf(env->verity_mode, sizeof(env->verity_mode), "unknown");
+    snprintf(env->boot_state_source, sizeof(env->boot_state_source), "none");
+    env->boot_unlocked = 0;
+
+    if (boot_kv(env->cmdline, "androidboot.verifiedbootstate",
+                env->verified_boot_state, sizeof(env->verified_boot_state)) == 0) {
+        src = "/proc/cmdline";
+    }
+    if (src == NULL && tr_read_file("/proc/bootconfig", blob, sizeof(blob)) > 0) {
+        if (boot_kv(blob, "androidboot.verifiedbootstate",
+                    env->verified_boot_state, sizeof(env->verified_boot_state)) == 0) {
+            src = "/proc/bootconfig";
+        }
+    }
+    if (src == NULL) {
+        /* The device may still expose the value through the vendor property
+         * channel; nothing else is assumed. */
+        snprintf(env->verified_boot_state, sizeof(env->verified_boot_state), "unknown");
+        return;
+    }
+    snprintf(env->boot_state_source, sizeof(env->boot_state_source), "%s", src);
+    if (strcmp(src, "/proc/cmdline") == 0) {
+        boot_kv(env->cmdline, "androidboot.flash.locked", env->flash_locked,
+                sizeof(env->flash_locked));
+        boot_kv(env->cmdline, "androidboot.veritymode", env->verity_mode,
+                sizeof(env->verity_mode));
+    } else {
+        boot_kv(blob, "androidboot.flash.locked", env->flash_locked, sizeof(env->flash_locked));
+        boot_kv(blob, "androidboot.veritymode", env->verity_mode, sizeof(env->verity_mode));
+    }
+    env->boot_unlocked = strcmp(env->verified_boot_state, "orange") == 0;
+    tr_logf(TR_LOG_INFO, "boot: verifiedbootstate=%s locked=%s source=%s",
+            env->verified_boot_state, env->flash_locked, env->boot_state_source);
+}
+
 /* ---- syscall reachability probes -------------------------------------- */
 /* Each probe runs in a throwaway child so a denial cannot poison our state. */
-
 static void probe_timer_create(tr_env *env)
 {
     struct sigevent sev;
@@ -382,6 +448,7 @@ int tr_probe_env(tr_env *env)
     env->cmdline_kasan_off = strstr(env->cmdline, "kasan=off") != NULL;
     env->cmdline_kfence_off = strstr(env->cmdline, "kfence.sample_interval=0") != NULL
         || strstr(env->cmdline, "kfence=off") != NULL;
+    tr_probe_boot_state(env);
 
     /* /sys/kernel/btf/vmlinux gives us struct layouts at runtime: this is how
      * the project avoids every hardcoded offset the handoff forbade. */
@@ -426,6 +493,11 @@ void tr_probe_json(const tr_env *env, tr_buf *out)
     tr_buf_add(out, ",\"machine\":"); tr_buf_add_json_string(out, env->machine);
     tr_buf_addf(out, ",\"page_size\":%d", env->page_size);
     tr_buf_addf(out, ",\"hwcap2_mte\":%s", env->hwcap2_mte ? "true" : "false");
+    tr_buf_add(out, ",\"verified_boot_state\":"); tr_buf_add_json_string(out, env->verified_boot_state);
+    tr_buf_add(out, ",\"flash_locked\":"); tr_buf_add_json_string(out, env->flash_locked);
+    tr_buf_add(out, ",\"verity_mode\":"); tr_buf_add_json_string(out, env->verity_mode);
+    tr_buf_addf(out, ",\"boot_unlocked\":%s", env->boot_unlocked ? "true" : "false");
+    tr_buf_add(out, ",\"boot_state_source\":"); tr_buf_add_json_string(out, env->boot_state_source);
     tr_buf_add(out, "},");
 
     tr_buf_add(out, "\"process\":{");
