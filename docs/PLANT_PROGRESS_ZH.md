@@ -124,3 +124,43 @@ objects / slabs / object_size                    → Permission denied
 4. 用 order-1 的 PFN 交集确认。
 
 下一步就按这个顺序实现 `--pressure-spray`。
+
+## 时序扫描：600 次试验的结论（2026-10-26 03:31）
+
+两轮构造、共 600 次（每轮：装 2048 定时器 → 起 exec 线程 → 延时 0~500 µs 发 SIGKILL
+→ 256 条 8 KiB 流抢页 → MSG_PEEK 基线 → waitpid 真 reap → 差分）：
+
+| 构造 | 次数 | 命中 | panic |
+| --- | --- | --- | --- |
+| 定时器挂在 **main 线程**（`pause()`） | 400 | 0 | 0 |
+| 定时器挂在 **exec 线程**（修正后） | 200 | 0 | 0 |
+
+```
+=== timing sweep: 20 rounds x 10 delays ===
+  progress: round 0/20 hits=0
+  ...
+sweep done: hits=0
+```
+
+**没有一次命中，也没有一次 panic。** 这个"零"本身有价值：说明目前这套构造
+从未让内核进入"定时器已释放、节点仍挂在队列"的不一致状态——所以 reap 时队列始终干净。
+
+### 下一步的四个假设（按可信度排序）
+
+1. **定时器时钟选错**：BRM-AN00 文档写的是 `CLOCK_THREAD_CPUTIME`，但 nezha 文档
+   提到的是 `CLOCK_PROCESS_CPUTIME`。线程级 CPU 定时器在 `de_thread` 里会被
+   `posix_cpu_timers_exit` 处理，进程级的归属不同，节点所在队列也不同。
+2. **不能靠外部 SIGKILL**：BRM 描述的触发里，打断 `exec_mmap` 的 SIGKILL 可能来自
+   内核自身的 `zap_other_threads`（即 `de_thread` 杀兄弟线程），而不是我们外部 kill。
+   外部 kill 会让整个线程组直接进入 do_exit，跳过了他们描述的那个分支。
+3. **节点必须先"入队且未过期"**：我把 `it_value` 设成 200 µs 并持续触发，
+   节点可能一直在被重排；改成一次性、远期过期，让节点静静躺在 rbtree 里。
+4. **reap 的调用者不同**：`posix_cpu_timers_exit` 只从 `release_task` 和
+   `begin_new_exec` 调用，谁去 reap 决定了走哪条路。
+
+### 本阶段的可交付结论
+
+- 页回收（86/91）✅ 可复现
+- 回读通道（recv 差分）✅ 跑通
+- 触发窗口 ❗ **600 次未命中**，需要换构造（上面四个假设）
+- 全过程**零 panic、零内核写入、零分区写入**，设备状态始终 green/Enforcing
