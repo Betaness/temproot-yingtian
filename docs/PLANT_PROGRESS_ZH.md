@@ -48,3 +48,31 @@ SIGEV_NONE   armed=4  proc_timers -1->-1  signals_fired=0
 - 前两步（烧 CPU + 入队）本身不写内核内存。
 - 真正的风险点在 reap：节点若已被释放且被我们的流占住、内容畸形，`rb_erase` 解引用会 oops → panic → 重启。
 - 所有阶段都保持"僵尸不主动 reap"的默认行为，由 init 回收；若要主动推进，必须显式加参数。
+
+## 并发喷流第一跑（2026-10-26 03:15）
+
+```
+=== concurrent spray ===
+trigger: free=-1 alloc=-1
+child=32561 exec_tid=0
+kill(32561, SIGKILL)  (tid handoff not required)
+sprayer: 8193 streams
+order-1 frees=0 allocs=1
+  no PFN intersection yet (window missed)
+```
+
+三个修正：
+
+1. **不需要 tid**：`SIGKILL` 是进程级信号，`kill(child, SIGKILL)` 一样能打断
+   `exec_mmap` 里的 `down_read_killable`。原来那条管道交接（`exec_tid`）直接删掉。
+2. **order-1 free 是零**：`posix_timers_cache` 是 `21 对象/8 KiB 页`，
+   只装 8 个定时器时整页不会被清空，所以内核根本不会释放那张页。
+   BRM 用的是 **2048 个定时器**才逼出页释放（"A 2048-delete does"）。
+3. `trigger: free=-1 alloc=-1`：`rss_stat/trigger` 是**追加写入**，同样的条目重复写会失败，
+   说明之前已经设过；事件实际是开的（有 1 条 alloc 记录为证），但样本太少。
+
+### 下一步
+
+- 定时器数量提到 **2048**（受 `RLIMIT_...`/per-process 上限约束，可能需要多进程）。
+- 喷流与 kill 的时序改成：先喷到一定量 → kill → 继续喷 → 停。
+- 用 `order=1` 且 `mm_page_free` 的 PFN ∩ `mm_page_alloc` 的 PFN 判断是否占住。
