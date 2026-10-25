@@ -110,3 +110,26 @@ dequeue_signal            0xffffffc0803a6a190
 - `futex.c`（167 KB，Futex PoC 全文）
 - `sig_readme.md`（Signal 链五阶段完整分析）
 - `infinity.txt`（oss-security 原始披露，含全部引入/修复 commit）
+
+## 可行性验证（stage1，2026-10-26）
+
+`scripts/harness/stage1.c` 把 Signal 链的第 1 阶段在本机跑通了三个关键环节：
+
+```
+[child] leader tid=31856, exiting leader
+[worker] timers=2048 leader=31856          ← 对"僵尸 leader 的 tid"创建 SIGEV_THREAD_ID 定时器，2048/2048 成功
+  child stat: 31856 (stage1) S ...          ← 非 leader 线程 exec 成功（用提前 open 的 fd + execveat）
+  attempt 0: pending SI_TIMER=0 stale=0     ← PTRACE_ATTACH + PEEKSIGINFO 可用，但这一轮没抢到竞态窗口
+```
+
+三个此前不确定的点全部澄清：
+
+| 问题 | 结论 |
+| --- | --- |
+| 能否向已退出（僵尸）leader 的 tid 排定时器 | ✅ 2048 个全部成功 |
+| 非 leader 线程 exec 时 `/proc/self/exe` 失效 | ✅ 必须用**提前 open 的 fd + `execveat(AT_EMPTY_PATH)`**，或 `/proc/thread-self/exe` |
+| app/shell 能否 ptrace 自己的子进程 | ✅ 可以（之前 EPERM 是因为子进程已是僵尸） |
+
+还差的是**竞态窗口本身**：PoC 用 membarrier 定向 IPI 在 flush 的 `list_del_init`
+中途打断 CPU0，让 hrtimer 回调把同一个 `sigq` 重新链入；这一轮没有构造，
+所以 `stale=0`。下一步就是把这套 IPI 时序搬过来。
