@@ -95,6 +95,7 @@ typedef struct {
     int sc_errno_uring;
     int sc_errno_userfaultfd;
     int sc_errno_exec;
+    char sc_notes[256];   /* e.g. "io_uring_setup=seccomp_kill" */
 
     /* ---- pre-existing root infrastructure ---- */
     int su_present;

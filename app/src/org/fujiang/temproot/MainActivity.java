@@ -235,6 +235,9 @@ public final class MainActivity extends Activity {
                             + " · io_uring=" + yesNo(sc.optBoolean("io_uring_setup"))
                             + " · userfaultfd=" + yesNo(sc.optBoolean("userfaultfd"))
                             + " · fork+exec=" + yesNo(sc.optBoolean("fork_exec")));
+            if (!sc.optString("notes").isEmpty()) {
+                box.addView(text("seccomp 直接杀进程的系统调用：" + sc.optString("notes"), 13, AMBER));
+            }
             box.addView(text("这些是本应用进程内真实发起过系统调用的结果，不是推断值。", 12, MUTED));
         }
         if (ki != null) {

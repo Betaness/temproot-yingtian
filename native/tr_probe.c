@@ -237,7 +237,119 @@ void tr_probe_boot_state(tr_env *env)
 }
 
 /* ---- syscall reachability probes -------------------------------------- */
-/* Each probe runs in a throwaway child so a denial cannot poison our state. */
+/* Each probe runs in a throwaway child so a denial cannot poison our state.
+ * Android's app seccomp policy kills the process on some syscalls (SIGSYS)
+ * instead of returning EPERM, so isolation here is mandatory, not cosmetic. */
+
+static void note_sc(tr_env *env, const char *text)
+{
+    size_t used = strlen(env->sc_notes);
+
+    if (used + strlen(text) + 2 < sizeof(env->sc_notes)) {
+        snprintf(env->sc_notes + used, sizeof(env->sc_notes) - used, "%s%s",
+                 used ? " " : "", text);
+    }
+}
+
+/* 1 = permitted, 0 = refused with errno, -2 = killed by seccomp, -3 = other */
+static int run_isolated(int (*fn)(void), int *err_out)
+{
+    pid_t pid;
+    int status = 0;
+
+    *err_out = 0;
+    pid = fork();
+    if (pid < 0) {
+        return -3;
+    }
+    if (pid == 0) {
+        int rc = fn();
+        if (rc == 0) {
+            _exit(0);
+        }
+        _exit(errno & 0x7f);
+    }
+    if (waitpid(pid, &status, 0) < 0) {
+        return -3;
+    }
+    if (WIFSIGNALED(status)) {
+        int sig = WTERMSIG(status);
+        *err_out = sig;
+        return sig == SIGSYS ? -2 : -3;
+    }
+    if (WIFEXITED(status)) {
+        int code = WEXITSTATUS(status);
+        if (code == 0) {
+            return 1;
+        }
+        *err_out = code;
+        return 0;
+    }
+    return -3;
+}
+
+static int fn_memfd(void)
+{
+    int fd = (int)syscall(__NR_memfd_create, "trprobe", 0);
+    if (fd < 0) {
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+static int fn_io_uring(void)
+{
+    struct {
+        uint32_t sq_entries;
+        uint32_t cq_entries;
+        uint32_t flags;
+        uint32_t sq_thread_cpu;
+        uint32_t sq_thread_idle;
+        uint32_t features;
+        uint32_t wq_fd;
+        uint32_t resv[3];
+    } p;
+    int fd;
+
+    memset(&p, 0, sizeof(p));
+    p.sq_entries = 2;
+    p.cq_entries = 4;
+    fd = (int)syscall(__NR_io_uring_setup, 2, &p);
+    if (fd < 0) {
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+static int fn_userfaultfd(void)
+{
+    int fd = (int)syscall(__NR_userfaultfd, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+static int fn_pipe(void)
+{
+    int fds[2];
+
+    if (pipe(fds) != 0) {
+        return -1;
+    }
+    /* A tiny F_SETPIPE_SZ is enough: we only need to know it is reachable. */
+    if (fcntl(fds[1], F_SETPIPE_SZ, 4096 * 8) <= 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return -1;
+    }
+    close(fds[0]);
+    close(fds[1]);
+    return 0;
+}
 static void probe_timer_create(tr_env *env)
 {
     struct sigevent sev;
@@ -273,57 +385,42 @@ static void probe_misc_syscalls(tr_env *env)
 {
     int fd, rc;
 
-    /* memfd_create: used by every modern payload hand-off. */
-    fd = (int)syscall(__NR_memfd_create, "trprobe", 0);
-    if (fd >= 0) {
+    /* Every syscall below may be in Android's seccomp KILL list, which raises
+     * SIGSYS instead of returning an error. Each one therefore runs in a
+     * throwaway child: the probe records "killed" and the app survives. */
+    rc = run_isolated(fn_memfd, &fd);
+    if (rc == 1) {
         env->sc_memfd_create = 1;
-        close(fd);
+    } else if (rc == -2) {
+        note_sc(env, "memfd=seccomp_kill");
     }
 
-    /* io_uring_setup: a first-class kernel object for heap shaping. */
-    {
-        struct {
-            uint32_t sq_entries;
-            uint32_t cq_entries;
-            uint32_t flags;
-            uint32_t sq_thread_cpu;
-            uint32_t sq_thread_idle;
-            uint32_t features;
-            uint32_t wq_fd;
-            uint32_t resv[3];
-        } p;
-        memset(&p, 0, sizeof(p));
-        p.sq_entries = 2;
-        p.cq_entries = 4;
-        rc = (int)syscall(__NR_io_uring_setup, 2, &p);
-        if (rc >= 0) {
-            env->sc_io_uring_setup = 1;
-            close(rc);
-        } else {
-            env->sc_errno_uring = errno;
-        }
-    }
-
-    /* userfaultfd: the classic race extender; usually seccomp-blocked. */
-    rc = (int)syscall(__NR_userfaultfd, 0);
-    if (rc >= 0) {
-        env->sc_userfaultfd = 1;
-        close(rc);
+    rc = run_isolated(fn_io_uring, &fd);
+    if (rc == 1) {
+        env->sc_io_uring_setup = 1;
+    } else if (rc == -2) {
+        env->sc_errno_uring = SIGSYS;
+        note_sc(env, "io_uring_setup=seccomp_kill");
     } else {
-        env->sc_errno_userfaultfd = errno;
+        env->sc_errno_uring = fd;
     }
 
-    /* pipe2 + F_SETPIPE_SZ: pipe_buffer is the primary reclaim target. */
-    {
-        int fds[2];
-        if (pipe(fds) == 0) {
-            int sz;
-            env->sc_pipe2 = 1;
-            sz = fcntl(fds[1], F_SETPIPE_SZ, 4096 * 8);
-            env->sc_setpipe_sz = sz > 0;
-            close(fds[0]);
-            close(fds[1]);
-        }
+    rc = run_isolated(fn_userfaultfd, &fd);
+    if (rc == 1) {
+        env->sc_userfaultfd = 1;
+    } else if (rc == -2) {
+        env->sc_errno_userfaultfd = SIGSYS;
+        note_sc(env, "userfaultfd=seccomp_kill");
+    } else {
+        env->sc_errno_userfaultfd = fd;
+    }
+
+    rc = run_isolated(fn_pipe, &fd);
+    if (rc == 1) {
+        env->sc_pipe2 = 1;
+        env->sc_setpipe_sz = 1;
+    } else if (rc == -2) {
+        note_sc(env, "pipe=seccomp_kill");
     }
 }
 
@@ -555,7 +652,8 @@ void tr_probe_json(const tr_env *env, tr_buf *out)
     tr_buf_addf(out, "\"pipe2\":%s,", env->sc_pipe2 ? "true" : "false");
     tr_buf_addf(out, "\"setpipe_sz\":%s,", env->sc_setpipe_sz ? "true" : "false");
     tr_buf_addf(out, "\"fork_exec\":%s,", env->sc_fork_exec ? "true" : "false");
-    tr_buf_addf(out, "\"exec_errno\":%d", env->sc_errno_exec);
+    tr_buf_addf(out, "\"exec_errno\":%d,", env->sc_errno_exec);
+    tr_buf_add(out, "\"notes\":"); tr_buf_add_json_string(out, env->sc_notes);
     tr_buf_add(out, "},");
 
     tr_buf_add(out, "\"existing_root\":{");
