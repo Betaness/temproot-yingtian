@@ -10,3 +10,4 @@
 2026-10-25T11:57:54Z  plant --preflight 自动化跑通：投票法量 slide=0x2459c00000（43 票），并打印 selinux_state 与 selinux-7 写目标；--arm-test 32 个 SIGEV_SIGNAL 定时器正常。--run 仍上锁（需 --i-accept-reboot）
 2026-10-25T12:03:22Z  plant 干跑验证：fork+exec 线程+SIGKILL 时序可用（子进程被 SIGKILL 终止、父进程 reap，设备无恙），slide 复测仍 0x2459c00000（34 票）。发现 SIGKILL 是进程级的，所以'父进程 reap'本身就是触发步；真跑需要装 SIGEV_SIGNAL 定时器 + 8KB stream 占位
 2026-10-25T12:05:57Z  伪造 timerqueue_node payload 完成：parent=cred_target-8、right=cred、left=0，页内按 0xe0+n*0x180 平铺 21 个槽位；--payload-preview 在真机打印验证。剩余三件事：真实 task 地址（从回收页读回）、伪造 cred 位置、rb_set_parent 副作用修补
+2026-10-25T12:11:23Z  plant 施工进度：slide/定时器/触发时序/伪造节点/页级检测全部可用；关键发现=定时器没进队列（主线程 pause 不烧 CPU，CLOCK_THREAD_CPUTIME 不过期就不入 rbtree），这解释了前两次为何不 panic。下一步：exec 线程 execve 前烧 CPU 让节点入队
