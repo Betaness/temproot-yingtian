@@ -2,3 +2,4 @@
 2026-10-25T11:10:36Z  写入 JOURNAL.md 续做入口 + docs/EXPLOIT_PLAN_ZH.md 利用阶段设计（三进程架构 / 阶段机 / 三重门禁 / 未解决清单）
 2026-10-25T11:10:58Z  native/tr_exploit.{h,c} 阶段机落地：plan/groom 真实实现，trigger/reclaim 三重门禁下自我拒绝（回收未就绪时不拿重启换噪音）
 2026-10-25T11:15:03Z  SESSION A 收尾：exploit 阶段机编进 APK 并在真机跑通（guard/layout/groom 通过，trigger 被 TR_DESTRUCTIVE_ALLOW 拒绝）；发现 Windows 侧 github.com:443 被重置，改走 raw + api.github.com；journal 的 *.log 曾被 .gitignore 吞掉，已修正
+2026-10-25T11:27:07Z  泄漏面扫描完成：app 全拒、shell 部分可读但地址零化、perf_event_open 四类全 EPERM → stage 5 缺的是前提（地址），不是代码；结论写入 docs/LEAK_SURFACE_ZH.md
