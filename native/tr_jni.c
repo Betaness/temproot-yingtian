@@ -15,6 +15,8 @@
 #include "tr_timer_exec.h"
 #include "tr_verify.h"
 #include "tr_rootd.h"
+#include "tr_exploit.h"
+#include "tr_leak.h"
 
 #define TR_LAYOUT_PATH "/sys/kernel/btf/vmlinux"
 
@@ -253,6 +255,65 @@ Java_org_fujiang_temproot_NativeBridge_nativeApplyEvidence(JNIEnv *env, jclass c
     {
         jstring result = new_string(env, tr_buf_cstr(&out));
         tr_buf_free(&out);
+        return result;
+    }
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_fujiang_temproot_NativeBridge_nativeExploitPlan(JNIEnv *env, jclass cls, jint do_groom)
+{
+    tr_exploit e;
+    tr_buf out;
+
+    (void)cls;
+    tr_buf_init(&out);
+    if (!g_probed) {
+        json_error(&out, TR_ECOMPAT);
+        {
+            jstring result = new_string(env, tr_buf_cstr(&out));
+            tr_buf_free(&out);
+            return result;
+        }
+    }
+    tr_exploit_plan(&e, &g_env, &g_guard, &g_layout);
+    if (do_groom) {
+        (void)tr_exploit_groom(&e);
+    }
+    tr_buf_add(&out, "{\"plan\":");
+    tr_exploit_json(&e, &out);
+    tr_buf_add(&out, ",\"guard\":");
+    tr_guard_json(&g_guard, &out);
+    tr_buf_add(&out, "}");
+    if (do_groom) {
+        /* Never leave groomed objects resident inside the app process. */
+        tr_exploit_ungroom(&e);
+    }
+    {
+        jstring result = new_string(env, tr_buf_cstr(&out));
+        tr_buf_free(&out);
+        return result;
+    }
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_fujiang_temproot_NativeBridge_nativeLeakProbe(JNIEnv *env, jclass cls)
+{
+    tr_leak leak;
+    tr_buf out, text;
+
+    (void)cls;
+    tr_buf_init(&out);
+    tr_buf_init(&text);
+    tr_leak_probe(&leak);
+    tr_leak_json(&leak, &out);
+    tr_leak_text(&leak, &text);
+    tr_buf_add(&out, ",\"report\":");
+    tr_buf_add_json_string(&out, tr_buf_cstr(&text));
+    tr_buf_add(&out, "}");
+    {
+        jstring result = new_string(env, tr_buf_cstr(&out));
+        tr_buf_free(&out);
+        tr_buf_free(&text);
         return result;
     }
 }
