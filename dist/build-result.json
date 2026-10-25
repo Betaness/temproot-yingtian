@@ -1,6 +1,6 @@
 {
   "apk": "temproot-0.3.0-experimental.apk",
-  "sha256": "f996321a4a5804084223cfaba0108574aa985b18750aab04b22a99812cd3443d",
+  "sha256": "84283aaf3f68cfb40122196779fdfe3f71ef44d4723005d339ae66af9936c9e3",
   "bytes": 94830,
   "version": "0.3.0-experimental",
   "min_sdk": 26,
@@ -32,23 +32,23 @@
     "abis": {
       "arm64-v8a": {
         "so": "dist/lib/arm64-v8a/libtemproot.so",
-        "sha256": "f2a6117ab6661d6dede7e023fc2e13b57518fe42e211688871b3f518e982a132",
-        "size_before_strip": 75144,
-        "size": 63320,
+        "sha256": "637a67b8b09be9f89562c0f1077f5b7aec536660e540296bd859b6fab67be5e1",
+        "size_before_strip": 75160,
+        "size": 63336,
         "triple": "aarch64-linux-android26"
       },
       "x86_64": {
         "so": "dist/lib/x86_64/libtemproot.so",
-        "sha256": "23e0237c3db07da1e6b5fd99f569da22daffffc9902b5da39393e7a483371a7f",
-        "size_before_strip": 72408,
-        "size": 64600,
+        "sha256": "fcfd957615905cddcc9f83e25475ea71ad6316e5c35ae624adb65eeee91890f2",
+        "size_before_strip": 72392,
+        "size": 64584,
         "triple": "x86_64-linux-android26"
       }
     }
   },
   "native_libs": {
-    "lib/arm64-v8a/libtemproot.so": "f2a6117ab6661d6dede7e023fc2e13b57518fe42e211688871b3f518e982a132",
-    "lib/x86_64/libtemproot.so": "23e0237c3db07da1e6b5fd99f569da22daffffc9902b5da39393e7a483371a7f"
+    "lib/arm64-v8a/libtemproot.so": "637a67b8b09be9f89562c0f1077f5b7aec536660e540296bd859b6fab67be5e1",
+    "lib/x86_64/libtemproot.so": "fcfd957615905cddcc9f83e25475ea71ad6316e5c35ae624adb65eeee91890f2"
   },
   "resource_table": {
     "compression": "stored",

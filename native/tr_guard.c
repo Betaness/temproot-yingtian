@@ -117,6 +117,11 @@ int tr_guard_evaluate(const tr_env *env, tr_guard *g)
     } else {
         guard_reason(g, "内核命令行含 kasan=off：本构建的 KASAN 检测在本次启动未生效");
     }
+
+    /* Nothing blocked so far means execution is permitted. This assignment was
+     * missing in 0.3.0 and made the guard block on every input. */
+    g->exploit_allowed = (g->block_code[0] == '\0');
+
     if (g->panic_on_oops) {
         guard_reason(g, "CONFIG_PANIC_ON_OOPS=y：真实 oops 仍会重启（生产内核常态，按风险保留）");
     }
