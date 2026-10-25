@@ -3,3 +3,4 @@
 2026-10-25T11:10:58Z  native/tr_exploit.{h,c} 阶段机落地：plan/groom 真实实现，trigger/reclaim 三重门禁下自我拒绝（回收未就绪时不拿重启换噪音）
 2026-10-25T11:15:03Z  SESSION A 收尾：exploit 阶段机编进 APK 并在真机跑通（guard/layout/groom 通过，trigger 被 TR_DESTRUCTIVE_ALLOW 拒绝）；发现 Windows 侧 github.com:443 被重置，改走 raw + api.github.com；journal 的 *.log 曾被 .gitignore 吞掉，已修正
 2026-10-25T11:27:07Z  泄漏面扫描完成：app 全拒、shell 部分可读但地址零化、perf_event_open 四类全 EPERM → stage 5 缺的是前提（地址），不是代码；结论写入 docs/LEAK_SURFACE_ZH.md
+2026-10-25T11:31:29Z  tracefs 路线探明：kprobe_events 可写(0777)、tracing_on 可写，但事件 enable 被 SELinux 拒 → 无法采样，拿不到内核地址；本次创建的 3 个探针已全部清理，tracing_on 复位
