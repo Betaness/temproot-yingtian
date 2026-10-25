@@ -62,6 +62,14 @@ static int killer_fn(void *arg)
     int tgid = (int)(intptr_t)arg; int old; pin_cpu(2);
     while (!(old = atomic_load(&g_exec_tid))) { if (atomic_load(&g_stop)) return 0; sched_yield(); }
     for (;;) { if (syscall(SYS_tgkill, tgid, old, 0) < 0 && errno == ESRCH) break; if (atomic_load(&g_stop)) return 0; }
+    {
+        /* exchange_tids() runs in de_thread(), i.e. BEFORE exec_mmap(). Firing
+         * immediately therefore lands before the window; wait a little so the
+         * task actually walks into exec_mmap() first. */
+        const char *d = getenv("KILL_DELAY_US");
+        int us = d ? atoi(d) : 0;
+        if (us > 0) usleep((useconds_t)us);
+    }
     syscall(SYS_tgkill, tgid, tgid, SIGKILL); return 0; }
 
 #define HELPER_STACK (1 << 20)
