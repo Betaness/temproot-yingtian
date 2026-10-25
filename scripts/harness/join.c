@@ -24,7 +24,7 @@
 #define NVMA 50000
 #define N_TIMERS 2048
 #define ARMED 1024
-#define MAX_SOCKS 900
+#define MAX_SOCKS 6000
 #define SELINUX_MINUS7 0xffffffd642759629ULL
 
 static struct shared { _Atomic int helpers[8]; _Atomic int nhelpers; } *g_sh;
@@ -147,7 +147,7 @@ static int wait_zombie(pid_t pid, int ms, int *status)
 static int count_hits(void)
 {
     int fd = open(T "/trace", O_RDONLY), nf = 0, na = 0, hit = 0; ssize_t n;
-    unsigned long long frees[512], allocs[512];
+    unsigned long long frees[4096], allocs[4096];
     if (fd < 0) return -1;
     {
         size_t used = 0;
@@ -167,8 +167,8 @@ static int count_hits(void)
         if (strstr(line, "order=1") && (strstr(line, "mm_page_free:") || strstr(line, "mm_page_alloc:"))) {
             char *pp = strstr(line, "pfn=0x");
             if (pp) { unsigned long long p = strtoull(pp + 6, NULL, 16);
-                if (strstr(line, "mm_page_free:") && nf < 512) frees[nf++] = p;
-                else if (strstr(line, "mm_page_alloc:") && na < 512) allocs[na++] = p; } }
+                if (strstr(line, "mm_page_free:") && nf < 4096) frees[nf++] = p;
+                else if (strstr(line, "mm_page_alloc:") && na < 4096) allocs[na++] = p; } }
         line = nl ? nl + 1 : NULL; }
     }
     { int i, j; for (i = 0; i < nf; i++) for (j = 0; j < na; j++) if (frees[i] == allocs[j]) hit++; }
